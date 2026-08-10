@@ -133,7 +133,7 @@ function createDefaultRuntime(): AgentAttentionStopRuntime {
 			)
 			const process = Bun.spawn(
 				['python3', owner, 'check-stop', '--thread-id', threadId],
-				{ stdout: 'pipe', stderr: 'pipe' },
+				{ stdout: 'pipe', stderr: 'pipe', timeout: 5000 },
 			)
 			const [stdout, stderr, exitCode] = await Promise.all([
 				new Response(process.stdout).text(),

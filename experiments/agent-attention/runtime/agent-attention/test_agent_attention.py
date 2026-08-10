@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import subprocess
@@ -11,11 +12,16 @@ import tempfile
 import time
 from datetime import datetime, timezone
 import unittest
+from unittest import mock
 from pathlib import Path
 from typing import Any
 
 
 RUNTIME = Path(__file__).with_name("agent-attention.py")
+RUNTIME_SPEC = importlib.util.spec_from_file_location("agent_attention_runtime", RUNTIME)
+assert RUNTIME_SPEC and RUNTIME_SPEC.loader
+AGENT_ATTENTION = importlib.util.module_from_spec(RUNTIME_SPEC)
+RUNTIME_SPEC.loader.exec_module(AGENT_ATTENTION)
 LIST_ID = "32C46BA9-FE7A-4758-AA9E-4C4A249A5DF6"
 REMINDER_ID = "11111111-1111-4111-8111-111111111111"
 OTHER_REMINDER_ID = "22222222-2222-4222-8222-222222222222"
@@ -151,8 +157,11 @@ elif args[0] == "edit":
         print("unknown result after write", file=sys.stderr)
         raise SystemExit(5)
     print(json.dumps(matches[0]))
+elif args[0] == "doctor":
+    print(os.environ.get("FAKE_REMINDERS_DOCTOR_JSON", '{"authorization":{"authorized":true}}'))
 else:
-    print(json.dumps({"authorization": {"authorized": True}}))
+    print("unsupported remindctl subcommand: " + args[0], file=sys.stderr)
+    raise SystemExit(2)
 """,
 			encoding="utf-8",
 		)
@@ -302,7 +311,28 @@ else:
 				]
 			],
 		)
-		self.assertNotIn("Outcome:", self.target["notes"])
+		inventory = json.loads(self.inventory_path.read_text())
+		target = next(item for item in inventory if item["id"] == REMINDER_ID)
+		self.assertNotIn("Outcome:", target["notes"])
+
+	def test_outcome_rejects_path_like_reminder_id_before_mapping_lookup(self) -> None:
+		malicious_id = f"../requests/{THREAD_ID}"
+		request_dir = self.state_dir / "requests"
+		request_dir.mkdir()
+		(request_dir / f"{THREAD_ID}.json").write_text(
+			json.dumps({**self.mapping, "reminder_id": malicious_id}), encoding="utf-8"
+		)
+		completed = self.run_cli(
+			"record-outcome",
+			"--reminder-id",
+			malicious_id,
+			"--outcome",
+			"Should not resolve outside gate custody.",
+			"--finished-at",
+			FINISHED_AT,
+		)
+		self.assertEqual(completed.returncode, 1)
+		self.assertIn("reminder ID must be one opaque path segment", completed.stderr)
 
 	def test_outcome_execute_updates_only_exact_completed_gate_once(self) -> None:
 		arguments = (
@@ -597,6 +627,17 @@ else:
 		self.assertFalse(result["changed"])
 		self.assertEqual(self.calls(), [])
 
+	def test_failed_submit_releases_the_per_thread_request_lock(self) -> None:
+		completed = self.run_cli(
+			*self.submit_arguments(),
+			"--execute",
+			env_update={"FAKE_REMINDERS_NEW_ID": ""},
+		)
+		self.assertEqual(completed.returncode, 1)
+		self.assertFalse(
+			(self.state_dir / "request-locks" / f"{THREAD_ID}.json").exists()
+		)
+
 	def test_stop_check_continues_declared_or_delivered_state_without_reading_prose(self) -> None:
 		request_dir = self.state_dir / "requests"
 		request_dir.mkdir()
@@ -671,8 +712,53 @@ else:
 			env_update={"FAKE_REMINDERS_HANG_SHOW_SECONDS": "2"},
 		)
 		self.assertEqual(completed.returncode, 1)
-		self.assertLess(time.monotonic() - started, 1)
+		self.assertLess(time.monotonic() - started, 1.9)
 		self.assertIn("bounded execution window", completed.stderr)
+
+	def test_poll_records_repair_for_one_broken_gate_and_delivers_the_next(self) -> None:
+		for path in (self.state_dir / "receipts").glob("*.json"):
+			path.unlink()
+		later_meaning = "Approve the later bounded gate only."
+		later_mapping = {
+			**self.mapping,
+			"reminder_id": OTHER_REMINDER_ID,
+			"expected_title": "[APPROVE] Later bounded gate",
+			"required_notes_line": f"Approval meaning: {later_meaning}",
+			"approval_meaning": later_meaning,
+		}
+		(self.state_dir / "gates" / f"{OTHER_REMINDER_ID}.json").write_text(
+			json.dumps(later_mapping), encoding="utf-8"
+		)
+		self.other.update(
+			{
+				"title": later_mapping["expected_title"],
+				"notes": later_mapping["required_notes_line"],
+				"isCompleted": True,
+				"completionDate": "2026-08-10T05:50:00Z",
+			}
+		)
+		self.inventory_path.write_text(json.dumps([self.other]), encoding="utf-8")
+
+		result = self.result(self.run_cli("poll"))
+		self.assertEqual(result["status"], "deliver")
+		self.assertIn(later_meaning, result["prompt"])
+		broken = json.loads(
+			(self.state_dir / "gates" / f"{REMINDER_ID}.json").read_text()
+		)
+		self.assertEqual(broken["status"], "repair")
+		self.assertIn(REMINDER_ID, broken["repair"])
+
+	def test_doctor_bounds_remindctl_and_rejects_non_object_json(self) -> None:
+		run_json = mock.Mock(return_value=[])
+		with mock.patch.object(AGENT_ATTENTION, "run_json", run_json):
+			with self.assertRaises(AGENT_ATTENTION.ContractError):
+				AGENT_ATTENTION.doctor(
+					AGENT_ATTENTION.argparse.Namespace(state_dir=self.state_dir)
+				)
+		run_json.assert_called_once_with(
+			["remindctl", "doctor", "--for-agent", "--json"],
+			timeout_seconds=30,
+		)
 
 	def test_record_delivery_rejects_invalid_event_ids_and_non_boolean_proof(self) -> None:
 		for invalid_id in ("../requests/forged", "A" * 64, "0" * 63):

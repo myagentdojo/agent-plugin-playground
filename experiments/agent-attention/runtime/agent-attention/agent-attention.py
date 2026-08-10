@@ -55,14 +55,27 @@ def load_json(path: Path) -> Any:
 def write_json(path: Path, value: Any, *, exclusive: bool = False) -> bool:
 	"""Write private JSON atomically enough for single-host gate custody."""
 	path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-	flags = os.O_WRONLY | os.O_CREAT | (os.O_EXCL if exclusive else os.O_TRUNC)
+	if exclusive:
+		try:
+			descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+		except FileExistsError:
+			return False
+		with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+			json.dump(value, handle, sort_keys=True)
+			handle.write("\n")
+		return True
+
+	temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
 	try:
-		descriptor = os.open(path, flags, 0o600)
-	except FileExistsError:
-		return False
-	with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-		json.dump(value, handle, sort_keys=True)
-		handle.write("\n")
+		descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+		with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+			json.dump(value, handle, sort_keys=True)
+			handle.write("\n")
+			handle.flush()
+			os.fsync(handle.fileno())
+		os.replace(temporary, path)
+	finally:
+		temporary.unlink(missing_ok=True)
 	return True
 
 
@@ -143,19 +156,6 @@ def validate_thread_id(value: str) -> str:
 		return str(uuid.UUID(value))
 	except ValueError as error:
 		raise ContractError("thread ID must be one UUID") from error
-
-
-def gate_notes(recommendation: str, approval_meaning: str) -> tuple[str, str]:
-	"""Render concise recommendation-first notes and their required contract line."""
-	required_line = f"Approval meaning: {approval_meaning}"
-	lines = [
-		f"Recommended: {recommendation}",
-		"",
-		required_line,
-		"Tick = approve only this action.",
-		"Discuss or disagree: open Codex.",
-	]
-	return "\n".join(lines), required_line
 
 
 def router_notes(intent: dict[str, Any]) -> tuple[str, str]:
@@ -273,18 +273,19 @@ def update_request_state(
 	state = load_json(path)
 	if state.get("reminder_id") != mapping["reminder_id"]:
 		return
-	write_json(
-		path,
-		{
-			**state,
-			"status": status,
-			"updated_at": datetime.now(timezone.utc).isoformat(),
-			**values,
-		},
-	)
+	updated = {
+		**state,
+		"status": status,
+		"updated_at": datetime.now(timezone.utc).isoformat(),
+		**values,
+	}
+	for field, value in values.items():
+		if value is None:
+			updated.pop(field, None)
+	write_json(path, updated)
 
 
-def submit_approval(args: argparse.Namespace) -> dict[str, Any]:
+def _submit_approval(args: argparse.Namespace) -> dict[str, Any]:
 	"""Validate, deduplicate, and optionally create one native approval gate."""
 	state_dir: Path = args.state_dir
 	intent, reasons = validate_approval_intent(approval_intent(args))
@@ -364,13 +365,13 @@ def submit_approval(args: argparse.Namespace) -> dict[str, Any]:
 			thread_id=thread_id,
 			repair="inspect exact request state before retry; no second gate was created",
 		)
+	args._agent_attention_request_lock_path = request_lock_path
 
 	if path.exists():
 		existing_result = completed_or_active_request_result(
 			load_json(path), request_identifier, thread_id
 		)
 		if existing_result:
-			request_lock_path.unlink()
 			return existing_result
 
 	request_claim_path = state_dir / "request-claims" / f"{request_identifier}.json"
@@ -521,7 +522,6 @@ def submit_approval(args: argparse.Namespace) -> dict[str, Any]:
 			"updated_at": datetime.now(timezone.utc).isoformat(),
 		},
 	)
-	request_lock_path.unlink()
 	return base_result(
 		"gated",
 		changed=True,
@@ -531,6 +531,16 @@ def submit_approval(args: argparse.Namespace) -> dict[str, Any]:
 		notification_count=1,
 		next_safe_action="keep the owning task paused until exact completion delivery",
 	)
+
+
+def submit_approval(args: argparse.Namespace) -> dict[str, Any]:
+	"""Release the owned per-thread request lock on every terminal path."""
+	try:
+		return _submit_approval(args)
+	finally:
+		lock_path = getattr(args, "_agent_attention_request_lock_path", None)
+		if isinstance(lock_path, Path):
+			lock_path.unlink(missing_ok=True)
 
 
 def read_inventory(
@@ -569,6 +579,19 @@ def validate_event_id(value: str) -> str:
 	"""Require the exact lowercase SHA-256 receipt key shape."""
 	if len(value) != 64 or any(character not in "0123456789abcdef" for character in value):
 		raise ContractError("event ID must be exactly 64 lowercase hexadecimal characters")
+	return value
+
+
+def validate_reminder_id(value: str) -> str:
+	"""Reject path syntax while preserving one opaque stable reminder ID."""
+	if (
+		not value
+		or value in {".", ".."}
+		or "/" in value
+		or "\\" in value
+		or "\x00" in value
+	):
+		raise ContractError("reminder ID must be one opaque path segment")
 	return value
 
 
@@ -636,6 +659,7 @@ def contains_outcome_notes(current_notes: str, addition: str) -> bool:
 
 def read_gate_mapping(state_dir: Path, reminder_id: str) -> dict[str, Any]:
 	"""Load only the mapping owned by one exact stable reminder ID."""
+	reminder_id = validate_reminder_id(reminder_id)
 	path = state_dir / "gates" / f"{reminder_id}.json"
 	if not path.exists():
 		raise ContractError("no gate mapping exists for the exact stable reminder ID")
@@ -872,18 +896,51 @@ def poll(args: argparse.Namespace) -> dict[str, Any]:
 		if receipt_path.exists():
 			continue
 		reminder = items_by_id.get(mapping.get("reminder_id"))
+		repair: str | None = None
 		if not reminder:
-			raise ContractError("configured stable reminder ID did not resolve")
-		if reminder.get("listID") != config["list"]["id"]:
-			raise ContractError("reminder resolved outside the configured list")
-		if reminder.get("title") != mapping.get("expected_title"):
-			raise ContractError("reminder title changed; refusing semantic inference")
-		if mapping.get("required_notes_line") not in (reminder.get("notes") or "").splitlines():
-			raise ContractError("approval meaning is absent from reminder notes")
+			repair = "configured stable reminder ID did not resolve"
+		elif reminder.get("listID") != config["list"]["id"]:
+			repair = "reminder resolved outside the configured list"
+		elif reminder.get("title") != mapping.get("expected_title"):
+			repair = "reminder title changed; refusing semantic inference"
+		elif mapping.get("required_notes_line") not in (reminder.get("notes") or "").splitlines():
+			repair = "approval meaning is absent from reminder notes"
+		if repair:
+			repair = f"{repair}; reminder ID: {mapping.get('reminder_id')}"
+			write_json(
+				mapping_path,
+				{
+					**mapping,
+					"status": "repair",
+					"repair": repair,
+					"updated_at": datetime.now(timezone.utc).isoformat(),
+				},
+			)
+			update_request_state(state_dir, mapping, "repair", repair=repair)
+			continue
+		if mapping.get("status") == "repair":
+			mapping = {
+				field: value
+				for field, value in mapping.items()
+				if field not in {"status", "repair", "updated_at"}
+			}
+			write_json(mapping_path, mapping)
+			update_request_state(state_dir, mapping, "gated", repair=None)
 		if not reminder.get("isCompleted"):
 			continue
 		if not reminder.get("completionDate"):
-			raise ContractError("completed reminder lacks a completion timestamp")
+			repair = f"completed reminder lacks a completion timestamp; reminder ID: {mapping['reminder_id']}"
+			write_json(
+				mapping_path,
+				{
+					**mapping,
+					"status": "repair",
+					"repair": repair,
+					"updated_at": datetime.now(timezone.utc).isoformat(),
+				},
+			)
+			update_request_state(state_dir, mapping, "repair", repair=repair)
+			continue
 
 		claim_path = state_dir / "claims" / f"{identifier}.json"
 		if claim_path.exists():
@@ -1001,11 +1058,7 @@ def record_delivery(args: argparse.Namespace) -> dict[str, Any]:
 	}
 	if not write_json(receipt_path, receipt, exclusive=True):
 		return base_result("already_delivered", changed=False, event_id=identifier)
-	log_path = state_dir / "audit.jsonl"
-	log_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-	with log_path.open("a", encoding="utf-8") as handle:
-		handle.write(json.dumps(receipt, sort_keys=True) + "\n")
-	os.chmod(log_path, 0o600)
+	append_audit(state_dir / "audit.jsonl", receipt)
 	update_request_state(
 		state_dir,
 		claim,
@@ -1078,7 +1131,15 @@ def check_stop(args: argparse.Namespace) -> dict[str, Any]:
 def doctor(args: argparse.Namespace) -> dict[str, Any]:
 	"""Report readiness without reading private message or reminder content."""
 	state_dir: Path = args.state_dir
-	reminders = run_json(["remindctl", "doctor", "--for-agent", "--json"])
+	reminders = run_json(
+		["remindctl", "doctor", "--for-agent", "--json"], timeout_seconds=30
+	)
+	if not isinstance(reminders, dict):
+		raise ContractError("remindctl doctor must return a JSON object")
+	authorization = reminders.get("authorization")
+	authorized = bool(
+		isinstance(authorization, dict) and authorization.get("authorized") is True
+	)
 	config_path = state_dir / "config.json"
 	config_status: dict[str, Any] = {"configured": False}
 	if config_path.exists():
@@ -1098,11 +1159,11 @@ def doctor(args: argparse.Namespace) -> dict[str, Any]:
 		]
 		handler["installed"] = "agent-attention" in schemes
 
-	ready = bool(reminders.get("authorization", {}).get("authorized")) and config_status["configured"] and handler["installed"]
+	ready = authorized and config_status["configured"] and handler["installed"]
 	return base_result(
 		"ready" if ready else "repair_needed",
 		changed=False,
-		reminders={"authorized": reminders.get("authorization", {}).get("authorized", False)},
+		reminders={"authorized": authorized},
 		config=config_status,
 		link_handler=handler,
 		next_safe_action=(

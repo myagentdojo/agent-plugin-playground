@@ -25,7 +25,7 @@ claims, and outcome receipts.
 4. If rejected, follow the returned repair or keep the decision in Codex.
 5. When gated, leave the task paused. No response means no approval.
 6. After exact-task delivery, apply only the stated approval meaning, run the
-   continuation, then use the owner’s outcome command.
+   continuation, then preview `record-outcome` and rerun it with `--execute`.
 
 Never infer approval from prose. Never create a second gate for the same
 request. Never delete or reopen the completed reminder.

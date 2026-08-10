@@ -97,7 +97,7 @@ describe('Agent Attention Codex Stop guard', () => {
 		})
 	})
 
-	test('default adapter reads only temporary structured owner state', async () => {
+	test('default adapter requires python3 on PATH and reads only temporary structured owner state', async () => {
 		const temporary = await mkdtemp(join(tmpdir(), 'agent-attention-hook-'))
 		const previous = process.env.XDG_STATE_HOME
 		process.env.XDG_STATE_HOME = temporary
