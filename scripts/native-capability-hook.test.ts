@@ -593,7 +593,7 @@ test("generation owns one deterministic LF fixture projection", () => {
 		"lifecycle-mechanics-proof.generated.json",
 	)
 	const expected =
-		'{\n  "schemaVersion": 1,\n  "purpose": "Harness Plugin Prototype lifecycle mechanics proof"\n}\n'
+		'{\n  "schemaVersion": 1,\n  "purpose": "Agent Plugin Playground lifecycle mechanics proof"\n}\n'
 	expect(readFileSync(sourcePath, "utf8")).toBe(expected)
 	expect(readFileSync(projectionPath, "utf8")).toBe(expected)
 	expect(runGenerateCheck(temporaryRepository).exitCode).toBe(0)

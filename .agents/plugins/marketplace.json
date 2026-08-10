@@ -1,11 +1,11 @@
 {
-  "name": "harness-native-plugin-prototype",
+  "name": "agent-plugin-playground",
   "interface": {
-    "displayName": "Harness Plugin Prototype"
+    "displayName": "Agent Plugin Playground"
   },
   "plugins": [
     {
-      "name": "harness-native-plugin-prototype",
+      "name": "agent-plugin-playground",
       "source": {
         "source": "local",
         "path": "./plugin"

@@ -86,7 +86,7 @@ test("checked-in manifests expose one coherent tour identity and relative native
 		readFileSync(join(root, "plugin", ".codex-plugin", "plugin.json"), "utf8"),
 	)
 
-	expect(config.name).toBe("harness-native-plugin-prototype")
+	expect(config.name).toBe("agent-plugin-playground")
 	expect(config.defaultPrompts).toEqual(["Run the native plugin capability tour."])
 	expect(claudeManifest).toMatchObject({
 		name: config.name,

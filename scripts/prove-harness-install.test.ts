@@ -784,7 +784,7 @@ test("managed or non-removable Codex state blocks with administrator handoff", (
 
 codexNativeTest("Codex JSON records native state (Codex CLI required; fallback proves bytes)", () => {
 	expect(proof.codex.mode).toBe("native-local-marketplace")
-	expect(proof.codex.marketplaceIdentity).toBe("harness-native-plugin-prototype")
+	expect(proof.codex.marketplaceIdentity).toBe("agent-plugin-playground")
 	expect(proof.codex.configuredRef).toBe(proof.preflight.requestedRef)
 	expect(proof.codex.installedMarketplaceRoot).toBeTruthy()
 	expect(proof.codex.installedPath).toBeTruthy()

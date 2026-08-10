@@ -1,6 +1,6 @@
 {
   "name": "agent-plugin-template-tooling",
-  "version": "0.3.0",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "packageManager": "bun@1.3.14",
@@ -9,6 +9,7 @@
   ],
   "scripts": {
     "test": "bun test",
+    "test:agent-attention": "python3 -m unittest experiments/agent-attention/runtime/agent-attention/test_agent_attention.py && bun test experiments/agent-attention/hooks/agent-attention-codex-stop.test.ts",
     "init": "bun run scripts/init.ts",
     "generate": "bun run scripts/generate.ts",
     "generate:check": "bun run scripts/generate.ts --check",
