@@ -471,13 +471,24 @@ test("candidate config cannot redirect trusted canary targets", () => {
 	})
 })
 
+function writeTrustedTemplateDriverConfig(driverRoot: string): void {
+	const configPath = join(driverRoot, "plugin.config.json")
+	const config = JSON.parse(readFileSync(configPath, "utf8")) as MutableBootstrapCandidate
+	config.template = true
+	config.repository = "https://github.com/myagentdojo/agent-plugin-template"
+	config.canary = {
+		owner: "myagentdojo",
+		actor: "myagentdojo",
+		publicRepository: "agent-plugin-template-canary-public",
+		privateRepository: "agent-plugin-template-canary-private",
+	}
+	writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`)
+}
+
 test("trusted template base admits exact first-consumer canary targets", () => {
 	const driver = canaryFixture()
 	const candidate = canaryFixture()
-	writeFileSync(
-		join(driver.temporaryRoot, "plugin.config.json"),
-		readFileSync(join(root, "plugin.config.json"), "utf8"),
-	)
+	writeTrustedTemplateDriverConfig(driver.temporaryRoot)
 
 	const result = runTrustedCanary(
 		driver.temporaryRoot,
@@ -550,10 +561,7 @@ test.each([
 ])("trusted template bootstrap rejects %s", (_name, mutate, environment) => {
 	const driver = canaryFixture()
 	const candidate = canaryFixture()
-	writeFileSync(
-		join(driver.temporaryRoot, "plugin.config.json"),
-		readFileSync(join(root, "plugin.config.json"), "utf8"),
-	)
+	writeTrustedTemplateDriverConfig(driver.temporaryRoot)
 	const candidateConfigPath = join(candidate.temporaryRoot, "plugin.config.json")
 	const candidateConfig = JSON.parse(
 		readFileSync(candidateConfigPath, "utf8"),
