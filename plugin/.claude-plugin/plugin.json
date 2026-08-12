@@ -1,7 +1,7 @@
 {
   "name": "agent-plugin-playground",
   "displayName": "Agent Plugin Playground",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "defaultEnabled": false,
   "description": "Bun-powered Agent Attention approval gates in the native plugin playground",
   "author": {
