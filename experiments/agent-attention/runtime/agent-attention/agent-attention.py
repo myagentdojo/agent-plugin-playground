@@ -708,13 +708,21 @@ def validate_outcome(value: str) -> str:
 
 def validate_finished_at(value: str) -> str:
 	"""Require an explicit timezone-aware terminal timestamp."""
+	parse_timezone_aware_timestamp(value, field_name="finished-at")
+	return value
+
+
+def parse_timezone_aware_timestamp(value: Any, *, field_name: str) -> datetime:
+	"""Parse one ISO 8601 timestamp with an explicit timezone."""
+	if not isinstance(value, str):
+		raise ContractError(f"{field_name} must be an ISO 8601 timestamp")
 	try:
 		parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
 	except ValueError as error:
-		raise ContractError("finished-at must be an ISO 8601 timestamp") from error
+		raise ContractError(f"{field_name} must be an ISO 8601 timestamp") from error
 	if parsed.tzinfo is None:
-		raise ContractError("finished-at must include a timezone")
-	return value
+		raise ContractError(f"{field_name} must include a timezone")
+	return parsed
 
 
 def append_outcome_notes(current_notes: str, addition: str) -> str:
@@ -983,6 +991,7 @@ def poll(args: argparse.Namespace) -> dict[str, Any]:
 		identifier = event_id(mapping)
 		receipt_path = state_dir / "receipts" / f"{identifier}.json"
 		if receipt_path.exists():
+			validate_delivery_receipt(load_json(receipt_path), mapping, identifier)
 			continue
 		reminder = items_by_id.get(mapping.get("reminder_id"))
 		repair: str | None = None
@@ -1017,8 +1026,13 @@ def poll(args: argparse.Namespace) -> dict[str, Any]:
 			update_request_state(state_dir, mapping, "gated", repair=None)
 		if not reminder.get("isCompleted"):
 			continue
-		if not reminder.get("completionDate"):
-			repair = f"completed reminder lacks a completion timestamp; reminder ID: {mapping['reminder_id']}"
+		completion_date = reminder.get("completionDate")
+		try:
+			parse_timezone_aware_timestamp(
+				completion_date, field_name="reminder completionDate"
+			)
+		except ContractError as error:
+			repair = f"{error}; reminder ID: {mapping['reminder_id']}"
 			write_json(
 				mapping_path,
 				{
@@ -1044,7 +1058,7 @@ def poll(args: argparse.Namespace) -> dict[str, Any]:
 			"claimed_at": datetime.now(timezone.utc).isoformat(),
 			"event_id": identifier,
 			"reminder_id": mapping["reminder_id"],
-			"completion_date": reminder["completionDate"],
+			"completion_date": completion_date,
 			"thread_id": mapping["thread_id"],
 			"approval_meaning": mapping["approval_meaning"],
 		}
@@ -1054,7 +1068,7 @@ def poll(args: argparse.Namespace) -> dict[str, Any]:
 			"deliver",
 			changed=True,
 			event_id=identifier,
-			completion_date=reminder["completionDate"],
+			completion_date=completion_date,
 			thread_id=mapping["thread_id"],
 			prompt=(
 				f"Agent Attention approval received. {mapping['approval_meaning']} "
@@ -1089,8 +1103,8 @@ def watch(args: argparse.Namespace) -> dict[str, Any]:
 		polls += 1
 		if result["status"] in {"deliver", "claimed"}:
 			if result["status"] == "deliver":
-				completed = datetime.fromisoformat(
-					result["completion_date"].replace("Z", "+00:00")
+				completed = parse_timezone_aware_timestamp(
+					result["completion_date"], field_name="reminder completionDate"
 				)
 				result["detection_latency_seconds"] = round(
 					max(0.0, (datetime.now(timezone.utc) - completed).total_seconds()), 3

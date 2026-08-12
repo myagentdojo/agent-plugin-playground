@@ -963,6 +963,47 @@ else:
 		self.assertLess(time.monotonic() - started, 1.9)
 		self.assertIn("bounded execution window", completed.stderr)
 
+	def test_poll_repairs_invalid_completion_timestamp_before_claiming(self) -> None:
+		for path in (self.state_dir / "receipts").glob("*.json"):
+			path.unlink()
+		self.target["completionDate"] = "2026-08-10T05:40:00"
+		self._write_inventory()
+		completed = self.run_cli("poll")
+		result = self.result(completed)
+		self.assertEqual(result["status"], "waiting")
+		self.assertEqual(list((self.state_dir / "claims").glob("*.json")), [])
+		mapping = json.loads(
+			(self.state_dir / "gates" / f"{REMINDER_ID}.json").read_text()
+		)
+		self.assertEqual(mapping["status"], "repair")
+		self.assertIn("completionDate must include a timezone", mapping["repair"])
+		self.assertNotIn("Traceback", completed.stderr)
+
+	def test_poll_rejects_malformed_or_mismatched_existing_receipt(self) -> None:
+		receipt_path = next((self.state_dir / "receipts").glob("*.json"))
+		for receipt, expected_error in (
+			("{", "Expecting property name"),
+			(
+				json.dumps(
+					{
+						"event_id": self._event_id(),
+						"reminder_id": REMINDER_ID,
+						"thread_id": OTHER_REMINDER_ID,
+						"approval_meaning": APPROVAL_MEANING,
+						"delivered_at": "2026-08-10T05:41:00Z",
+					}
+				),
+				"does not match gate field: thread_id",
+			),
+		):
+			with self.subTest(expected_error=expected_error):
+				receipt_path.write_text(receipt, encoding="utf-8")
+				completed = self.run_cli("poll")
+				self.assertEqual(completed.returncode, 1)
+				self.assertIn(expected_error, completed.stderr)
+				self.assertNotIn("Traceback", completed.stderr)
+				self.assertEqual(list((self.state_dir / "claims").glob("*.json")), [])
+
 	def test_poll_records_repair_for_one_broken_gate_and_delivers_the_next(self) -> None:
 		for path in (self.state_dir / "receipts").glob("*.json"):
 			path.unlink()
