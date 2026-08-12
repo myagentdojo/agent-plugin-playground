@@ -3,9 +3,9 @@
 runtime_inventory_select_bundle() {
 	case "$1" in
 	'agent-attention')
-		RUNTIME_BUNDLE_PATH='runtime/agent-attention-202d4ab2aa5da04a.js'
-		RUNTIME_BUNDLE_BYTES='4109'
-		RUNTIME_BUNDLE_SHA256='202d4ab2aa5da04ac0e819172a335679b02a0c0abcb55eada424e8ac09d6021c'
+		RUNTIME_BUNDLE_PATH='runtime/agent-attention-5133bb12807899e9.js'
+		RUNTIME_BUNDLE_BYTES='4589'
+		RUNTIME_BUNDLE_SHA256='5133bb12807899e90fdc0f861ca096ca8be9faa963063742630ce786ff0303c6'
 		;;
 	'hello-world')
 		RUNTIME_BUNDLE_PATH='runtime/hello-world.js'

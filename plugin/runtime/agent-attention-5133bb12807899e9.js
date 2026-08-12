@@ -1,5 +1,6 @@
 // @bun
 // packages/agent-attention/src/main.ts
+import { randomUUID } from "crypto";
 import { join } from "path";
 
 // packages/agent-attention/src/stop.ts
@@ -11,7 +12,7 @@ function isAgentAttentionStopInput(value) {
   if (!value || typeof value !== "object" || Array.isArray(value))
     return false;
   const input = value;
-  if (typeof input.cwd !== "string" || input.cwd.trim() === "")
+  if (input.cwd !== undefined && typeof input.cwd !== "string")
     return false;
   if (typeof input.session_id !== "string" || input.session_id.trim() === "")
     return false;
@@ -47,6 +48,18 @@ function invalidAgentAttentionStopInput() {
 }
 
 // packages/agent-attention/src/main.ts
+async function writeOutput(stream, content) {
+  if (content.length === 0)
+    return;
+  await new Promise((resolve, reject) => {
+    stream.write(content, (error) => {
+      if (error)
+        reject(error);
+      else
+        resolve();
+    });
+  });
+}
 function pythonExecutable() {
   return process.env.AGENT_ATTENTION_PYTHON || "python3";
 }
@@ -70,6 +83,9 @@ async function runPython(arguments_, timeout) {
     return {
       exitCode: 1,
       stdout: `${JSON.stringify({
+        contract_id: "agent-attention.approval-gate",
+        schema_version: "1",
+        run_id: randomUUID(),
         status: "error",
         changed: false,
         retry_safe: false,
@@ -106,18 +122,20 @@ async function main() {
     try {
       input = await Bun.stdin.json();
     } catch {
-      process.stdout.write(`${JSON.stringify(invalidAgentAttentionStopInput())}
+      await writeOutput(process.stdout, `${JSON.stringify(invalidAgentAttentionStopInput())}
 `);
       return 0;
     }
     const output = await runAgentAttentionStop(input, installedStopRuntime());
-    process.stdout.write(`${JSON.stringify(output)}
+    await writeOutput(process.stdout, `${JSON.stringify(output)}
 `);
     return 0;
   }
   const result = await runPython(arguments_);
-  process.stdout.write(result.stdout);
-  process.stderr.write(result.stderr);
+  await Promise.all([
+    writeOutput(process.stdout, result.stdout),
+    writeOutput(process.stderr, result.stderr)
+  ]);
   return result.exitCode;
 }
-process.exit(await main());
+process.exitCode = await main();

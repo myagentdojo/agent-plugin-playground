@@ -199,7 +199,7 @@ for (const surface of [catalog.skills, bundles.bundles]) {
 		"skill-b",
 	])) {
 		throw new Error(
-			`capability-tour entered the executable runtime closure: ${JSON.stringify(surfaceKeys)}`,
+			`executable runtime closure does not match the expected skills: ${JSON.stringify(surfaceKeys)}`,
 		)
 	}
 }

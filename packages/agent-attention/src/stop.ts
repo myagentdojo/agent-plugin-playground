@@ -1,6 +1,6 @@
 /** Stable Stop fields used to correlate one exact task with owner state. */
 export interface AgentAttentionStopInput {
-	cwd: string
+	cwd?: string
 	session_id: string
 	stop_hook_active?: boolean
 }
@@ -31,7 +31,7 @@ const invalidStopInput: AgentAttentionStopOutput = {
 export function isAgentAttentionStopInput(value: unknown): value is AgentAttentionStopInput {
 	if (!value || typeof value !== "object" || Array.isArray(value)) return false
 	const input = value as Record<string, unknown>
-	if (typeof input.cwd !== "string" || input.cwd.trim() === "") return false
+	if (input.cwd !== undefined && typeof input.cwd !== "string") return false
 	if (typeof input.session_id !== "string" || input.session_id.trim() === "") return false
 	return input.stop_hook_active === undefined || typeof input.stop_hook_active === "boolean"
 }

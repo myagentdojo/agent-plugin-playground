@@ -31,6 +31,7 @@ COMMAND_CATALOG = (
 	{"name": "check-stop", "summary": "Check structured owner state before a task stops."},
 )
 MANAGED_URL_PREFIX = "remindctl URL (managed): "
+REMINDCTL_COMMAND_TIMEOUT_SECONDS = 30
 
 
 class ContractError(Exception):
@@ -162,30 +163,25 @@ def acquire_request_lock(
 	return descriptor
 
 
-def release_request_lock(path: Path, descriptor: int) -> None:
-	"""Remove only the path still backed by the held request lock."""
+def release_request_lock(_path: Path, descriptor: int) -> None:
+	"""Release one persistent request-lock inode."""
 	try:
-		try:
-			path_stat = os.stat(path, follow_symlinks=False)
-		except FileNotFoundError:
-			path_stat = None
-		descriptor_stat = os.fstat(descriptor)
-		if path_stat and (
-			path_stat.st_dev == descriptor_stat.st_dev
-			and path_stat.st_ino == descriptor_stat.st_ino
-		):
-			path.unlink()
-	finally:
 		fcntl.flock(descriptor, fcntl.LOCK_UN)
+	finally:
 		os.close(descriptor)
 
 
 def append_audit(path: Path, value: Any) -> None:
 	"""Append one private JSON audit event."""
 	path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-	with path.open("a", encoding="utf-8") as handle:
+	descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+	try:
+		os.fchmod(descriptor, 0o600)
+	except BaseException:
+		os.close(descriptor)
+		raise
+	with os.fdopen(descriptor, "a", encoding="utf-8") as handle:
 		handle.write(json.dumps(value, sort_keys=True) + "\n")
-	os.chmod(path, 0o600)
 
 
 def run_json(command: list[str], *, timeout_seconds: float | None = None) -> Any:
@@ -622,7 +618,8 @@ def _submit_approval(args: argparse.Namespace) -> dict[str, Any]:
 				notification_at,
 				"--json",
 				"--no-input",
-			]
+			],
+			timeout_seconds=REMINDCTL_COMMAND_TIMEOUT_SECONDS,
 		)
 	except OSError as error:
 		request_claim_path.unlink(missing_ok=True)
@@ -989,7 +986,8 @@ def read_exact_completed_reminder(reminder_id: str, list_id: str) -> dict[str, A
 			list_id,
 			"--json",
 			"--no-input",
-		]
+		],
+		timeout_seconds=REMINDCTL_COMMAND_TIMEOUT_SECONDS,
 	)
 	inventory = require_reminder_inventory(
 		inventory, document_name="completed reminder inventory"
@@ -1136,7 +1134,8 @@ def record_outcome(args: argparse.Namespace) -> dict[str, Any]:
 				updated_notes,
 				"--json",
 				"--no-input",
-			]
+			],
+			timeout_seconds=REMINDCTL_COMMAND_TIMEOUT_SECONDS,
 		)
 	except OSError:
 		claim_path.unlink(missing_ok=True)
@@ -1648,7 +1647,8 @@ def main() -> int:
 			json.dumps(
 				base_result(
 					"error",
-					changed="unknown",
+					changed=False,
+					change_uncertain=True,
 					retry_safe=False,
 					error_category="contract_or_runtime",
 					next_safe_action="inspect current state before retry",

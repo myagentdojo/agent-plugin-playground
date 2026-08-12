@@ -66,26 +66,30 @@ test("Codex Stop declares the custody-launched installed adapter", () => {
 	})
 })
 
-test("installed bundle reports dependency diagnostics without repository paths", () => {
+test("installed Stop adapter fails closed when Python is unavailable", () => {
 	const inventory = JSON.parse(
 		readFileSync(join(installedRoot, "runtime", "bundle-inventory.json"), "utf8"),
 	)
 	const bundlePath = join(installedRoot, inventory.bundles["agent-attention"].path)
 	const completed = Bun.spawnSync({
-		cmd: [process.execPath, bundlePath, "commands"],
+		cmd: [process.execPath, bundlePath, "hook-stop"],
 		cwd: temporaryRoot,
 		env: { ...process.env, AGENT_ATTENTION_PYTHON: "/missing/python3" },
+		stdin: Buffer.from(
+			JSON.stringify({
+				cwd: temporaryRoot,
+				session_id: "019fc54e-ff95-7ca1-af49-5720c36fdc0d",
+			}),
+		),
 		stdout: "pipe",
 		stderr: "pipe",
 	})
 	const result = JSON.parse(completed.stdout.toString())
 
-	expect(completed.exitCode).toBe(1)
-	expect(result).toMatchObject({
-		status: "error",
-		error_category: "missing_python",
-		retry_safe: false,
-	})
+	expect(completed.exitCode, completed.stderr.toString()).toBe(0)
+	expect(result).toMatchObject({ decision: "block" })
+	expect(result.reason).toContain("could not verify structured owner state")
+	expect(result.reason).toContain("could not start python3")
 	expect(completed.stderr.toString()).not.toContain(root)
 })
 

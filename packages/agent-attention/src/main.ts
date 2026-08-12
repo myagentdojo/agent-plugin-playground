@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto"
 import { join } from "node:path"
 
 import {
@@ -10,6 +11,19 @@ interface ProcessResult {
 	exitCode: number
 	stdout: string
 	stderr: string
+}
+
+async function writeOutput(
+	stream: NodeJS.WriteStream,
+	content: string,
+): Promise<void> {
+	if (content.length === 0) return
+	await new Promise<void>((resolve, reject) => {
+		stream.write(content, (error) => {
+			if (error) reject(error)
+			else resolve()
+		})
+	})
 }
 
 function pythonExecutable(): string {
@@ -36,6 +50,9 @@ async function runPython(arguments_: string[], timeout?: number): Promise<Proces
 		return {
 			exitCode: 1,
 			stdout: `${JSON.stringify({
+				contract_id: "agent-attention.approval-gate",
+				schema_version: "1",
+				run_id: randomUUID(),
 				status: "error",
 				changed: false,
 				retry_safe: false,
@@ -71,17 +88,22 @@ async function main(): Promise<number> {
 		try {
 			input = await Bun.stdin.json()
 		} catch {
-			process.stdout.write(`${JSON.stringify(invalidAgentAttentionStopInput())}\n`)
+			await writeOutput(
+				process.stdout,
+				`${JSON.stringify(invalidAgentAttentionStopInput())}\n`,
+			)
 			return 0
 		}
 		const output = await runAgentAttentionStop(input, installedStopRuntime())
-		process.stdout.write(`${JSON.stringify(output)}\n`)
+		await writeOutput(process.stdout, `${JSON.stringify(output)}\n`)
 		return 0
 	}
 	const result = await runPython(arguments_)
-	process.stdout.write(result.stdout)
-	process.stderr.write(result.stderr)
+	await Promise.all([
+		writeOutput(process.stdout, result.stdout),
+		writeOutput(process.stderr, result.stderr),
+	])
 	return result.exitCode
 }
 
-process.exit(await main())
+process.exitCode = await main()
