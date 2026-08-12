@@ -128,7 +128,9 @@ def write_json(path: Path, value: Any, *, exclusive: bool = False) -> bool:
 	return True
 
 
-def acquire_request_lock(path: Path, value: dict[str, Any]) -> int | None:
+def acquire_request_lock(
+	path: Path, value: dict[str, Any], *, blocking: bool = False
+) -> int | None:
 	"""Acquire one crash-recoverable process-owned request lock."""
 	path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
 	flags = os.O_RDWR | os.O_CREAT
@@ -136,7 +138,8 @@ def acquire_request_lock(path: Path, value: dict[str, Any]) -> int | None:
 		flags |= os.O_NOFOLLOW
 	descriptor = os.open(path, flags, 0o600)
 	try:
-		fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+		operation = fcntl.LOCK_EX if blocking else fcntl.LOCK_EX | fcntl.LOCK_NB
+		fcntl.flock(descriptor, operation)
 	except BlockingIOError:
 		os.close(descriptor)
 		return None
@@ -419,21 +422,33 @@ def update_request_state(
 	path = request_path(state_dir, mapping["thread_id"])
 	if not path.exists():
 		return
-	state = require_json_object(load_json(path), document_name="request state")
-	if state.get("reminder_id") != mapping["reminder_id"]:
-		return
-	if state.get("status") == "completed" and status != "completed":
-		return
-	updated = {
-		**state,
-		"status": status,
-		"updated_at": datetime.now(timezone.utc).isoformat(),
-		**values,
-	}
-	for field, value in values.items():
-		if value is None:
-			updated.pop(field, None)
-	write_json(path, updated)
+	lock_path = state_dir / "request-locks" / f"{mapping['thread_id']}.json"
+	descriptor = acquire_request_lock(
+		lock_path,
+		{"thread_id": mapping["thread_id"], "operation": "update-request-state"},
+		blocking=True,
+	)
+	assert descriptor is not None
+	try:
+		if not path.exists():
+			return
+		state = require_json_object(load_json(path), document_name="request state")
+		if state.get("reminder_id") != mapping["reminder_id"]:
+			return
+		if state.get("status") == "completed" and status != "completed":
+			return
+		updated = {
+			**state,
+			"status": status,
+			"updated_at": datetime.now(timezone.utc).isoformat(),
+			**values,
+		}
+		for field, value in values.items():
+			if value is None:
+				updated.pop(field, None)
+		write_json(path, updated)
+	finally:
+		release_request_lock(lock_path, descriptor)
 
 
 def reconcile_declared_request(
@@ -482,6 +497,35 @@ def _submit_approval(args: argparse.Namespace) -> dict[str, Any]:
 		if existing_result:
 			return existing_result
 
+	if args.execute:
+		request_lock_path = state_dir / "request-locks" / f"{thread_id}.json"
+		request_lock_descriptor = acquire_request_lock(
+			request_lock_path,
+			{
+				"request_id": request_identifier,
+				"thread_id": thread_id,
+				"locked_at": datetime.now(timezone.utc).isoformat(),
+			},
+		)
+		if request_lock_descriptor is None:
+			return base_result(
+				"claimed",
+				changed=False,
+				request_id=request_identifier,
+				thread_id=thread_id,
+				repair="inspect exact request state before retry; no second gate was created",
+			)
+		args._agent_attention_request_lock = (
+			request_lock_path,
+			request_lock_descriptor,
+		)
+		if path.exists():
+			existing_result = completed_or_active_request_result(
+				state_dir, load_json(path), request_identifier, thread_id
+			)
+			if existing_result:
+				return existing_result
+
 	if reasons:
 		repair = "; ".join(reasons)
 		if args.execute:
@@ -527,35 +571,6 @@ def _submit_approval(args: argparse.Namespace) -> dict[str, Any]:
 			side_effect="create one Apple Reminder with one immediate native alert",
 			next_safe_action="review the structured gate, then rerun with --execute",
 		)
-
-	request_lock_path = state_dir / "request-locks" / f"{thread_id}.json"
-	request_lock_descriptor = acquire_request_lock(
-		request_lock_path,
-		{
-			"request_id": request_identifier,
-			"thread_id": thread_id,
-			"locked_at": datetime.now(timezone.utc).isoformat(),
-		},
-	)
-	if request_lock_descriptor is None:
-		return base_result(
-			"claimed",
-			changed=False,
-			request_id=request_identifier,
-			thread_id=thread_id,
-			repair="inspect exact request state before retry; no second gate was created",
-		)
-	args._agent_attention_request_lock = (
-		request_lock_path,
-		request_lock_descriptor,
-	)
-
-	if path.exists():
-		existing_result = completed_or_active_request_result(
-			state_dir, load_json(path), request_identifier, thread_id
-		)
-		if existing_result:
-			return existing_result
 
 	request_claim_path = state_dir / "request-claims" / f"{request_identifier}.json"
 	if request_claim_path.exists() and not path.exists():
