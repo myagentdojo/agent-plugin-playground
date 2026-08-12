@@ -196,6 +196,8 @@ def run_json(command: list[str], *, timeout_seconds: float | None = None) -> Any
 		)
 	except subprocess.TimeoutExpired as error:
 		raise ContractError("command exceeded the bounded execution window") from error
+	except UnicodeDecodeError as error:
+		raise ContractError("command output is not valid UTF-8") from error
 	if completed.returncode != 0:
 		detail = completed.stderr.strip() or completed.stdout.strip()
 		raise ContractError(f"command failed: {detail}")
@@ -659,7 +661,20 @@ def _submit_approval(args: argparse.Namespace) -> dict[str, Any]:
 			},
 		)
 		raise
-	created_inventory = read_inventory(config)
+	try:
+		created_inventory = read_inventory(config)
+	except (ContractError, json.JSONDecodeError, OSError, subprocess.SubprocessError) as error:
+		write_json(
+			path,
+			{
+				**declared,
+				"status": "repair",
+				"reminder_id": reminder_id,
+				"repair": f"created reminder could not be verified; inspect exact stable ID before retry: {error}",
+				"updated_at": datetime.now(timezone.utc).isoformat(),
+			},
+		)
+		raise
 	created_matches = [item for item in created_inventory if item.get("id") == reminder_id]
 	if len(created_matches) != 1:
 		write_json(

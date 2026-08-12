@@ -115,6 +115,9 @@ with calls_path.open("a", encoding="utf-8") as handle:
 inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
 
 if args[0] == "show":
+    if os.environ.get("FAKE_REMINDERS_INVALID_SHOW_JSON") == "1":
+        print("{")
+        raise SystemExit(0)
     if os.environ.get("FAKE_REMINDERS_HANG_SHOW_SECONDS"):
         time.sleep(float(os.environ["FAKE_REMINDERS_HANG_SHOW_SECONDS"]))
     if args[1] == "all" and os.environ.get("FAKE_REMINDERS_COMPLETE_AFTER_POLLS"):
@@ -168,6 +171,9 @@ elif args[0] == "edit":
         raise SystemExit(5)
     print(json.dumps(matches[0]))
 elif args[0] == "doctor":
+    if os.environ.get("FAKE_REMINDERS_INVALID_UTF8") == "1":
+        sys.stdout.buffer.write(b"\\xff")
+        raise SystemExit(0)
     print(os.environ.get("FAKE_REMINDERS_DOCTOR_JSON", '{"authorization":{"authorized":true}}'))
 else:
     print("unsupported remindctl subcommand: " + args[0], file=sys.stderr)
@@ -316,6 +322,15 @@ else:
 		completed = self.run_cli("poll")
 		self.assertEqual(completed.returncode, 1)
 		self.assertIn("persisted JSON is not valid UTF-8", completed.stderr)
+		self.assertNotIn("Traceback", completed.stderr)
+		self.assertEqual(json.loads(completed.stdout)["status"], "error")
+
+	def test_invalid_command_output_utf8_uses_the_structured_error_boundary(self) -> None:
+		completed = self.run_cli(
+			"doctor", env_update={"FAKE_REMINDERS_INVALID_UTF8": "1"}
+		)
+		self.assertEqual(completed.returncode, 1)
+		self.assertIn("command output is not valid UTF-8", completed.stderr)
 		self.assertNotIn("Traceback", completed.stderr)
 		self.assertEqual(json.loads(completed.stdout)["status"], "error")
 
@@ -981,6 +996,23 @@ else:
 			(self.state_dir / "requests" / f"{THREAD_ID}.json").read_text()
 		)
 		self.assertEqual(request["status"], "repair")
+		self.assertEqual(len([call for call in self.calls() if call[0] == "add"]), 1)
+
+	def test_submit_persists_stable_id_when_post_add_inventory_is_malformed(self) -> None:
+		completed = self.run_cli(
+			*self.submit_arguments(),
+			"--execute",
+			env_update={"FAKE_REMINDERS_INVALID_SHOW_JSON": "1"},
+		)
+		self.assertEqual(completed.returncode, 1)
+		self.assertIn("command returned invalid JSON", completed.stderr)
+		self.assertNotIn("Traceback", completed.stderr)
+		request = json.loads(
+			(self.state_dir / "requests" / f"{THREAD_ID}.json").read_text()
+		)
+		self.assertEqual(request["status"], "repair")
+		self.assertEqual(request["reminder_id"], NEW_REMINDER_ID)
+		self.assertIn("could not be verified", request["repair"])
 		self.assertEqual(len([call for call in self.calls() if call[0] == "add"]), 1)
 
 	def test_submit_requires_literal_false_created_completion_state(self) -> None:
