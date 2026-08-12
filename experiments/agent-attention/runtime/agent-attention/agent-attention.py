@@ -908,17 +908,21 @@ def record_outcome(args: argparse.Namespace) -> dict[str, Any]:
 			repair="inspect the exact reminder before releasing this outcome claim",
 		)
 
-	run_json(
-		[
-			"remindctl",
-			"edit",
-			args.reminder_id,
-			"--notes",
-			updated_notes,
-			"--json",
-			"--no-input",
-		]
-	)
+	try:
+		run_json(
+			[
+				"remindctl",
+				"edit",
+				args.reminder_id,
+				"--notes",
+				updated_notes,
+				"--json",
+				"--no-input",
+			]
+		)
+	except OSError:
+		claim_path.unlink(missing_ok=True)
+		raise
 	after = read_exact_completed_reminder(args.reminder_id, config["list"]["id"])
 	validate_outcome_target(after, mapping, config)
 	if after.get("notes") != updated_notes:
@@ -1248,13 +1252,26 @@ def doctor(args: argparse.Namespace) -> dict[str, Any]:
 	info_path = handler_path / "Contents" / "Info.plist"
 	handler = {"installed": False, "path": str(handler_path)}
 	if info_path.exists():
-		with info_path.open("rb") as handle:
-			info = plistlib.load(handle)
-		schemes = [
-			scheme
-			for item in info.get("CFBundleURLTypes", [])
-			for scheme in item.get("CFBundleURLSchemes", [])
-		]
+		try:
+			with info_path.open("rb") as handle:
+				info = plistlib.load(handle)
+		except (plistlib.InvalidFileException, TypeError, ValueError) as error:
+			raise ContractError("link handler Info.plist is malformed") from error
+		if not isinstance(info, dict):
+			raise ContractError("link handler Info.plist must contain a dictionary")
+		url_types = info.get("CFBundleURLTypes", [])
+		if not isinstance(url_types, list) or any(
+			not isinstance(item, dict) for item in url_types
+		):
+			raise ContractError("link handler Info.plist URL types are malformed")
+		schemes: list[str] = []
+		for item in url_types:
+			item_schemes = item.get("CFBundleURLSchemes", [])
+			if not isinstance(item_schemes, list) or any(
+				not isinstance(scheme, str) for scheme in item_schemes
+			):
+				raise ContractError("link handler Info.plist URL schemes are malformed")
+			schemes.extend(item_schemes)
 		handler["installed"] = "agent-attention" in schemes
 
 	ready = authorized and config_status["configured"] and handler["installed"]

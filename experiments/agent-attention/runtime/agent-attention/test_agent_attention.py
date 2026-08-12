@@ -6,6 +6,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import plistlib
 import subprocess
 import sys
 import tempfile
@@ -127,6 +128,8 @@ if args[0] == "show":
                 inventory_path.write_text(json.dumps(inventory), encoding="utf-8")
     if args[1] == "completed":
         inventory = [item for item in inventory if item.get("isCompleted")]
+        if os.environ.get("FAKE_REMINDERS_REMOVE_AFTER_COMPLETED") == "1":
+            Path(sys.argv[0]).unlink()
     print(json.dumps(inventory))
 elif args[0] == "add":
     reminder = {
@@ -625,6 +628,36 @@ else:
 		self.assertEqual(retried["status"], "recorded")
 		self.assertEqual(len([call for call in self.calls() if call[0] == "edit"]), 1)
 
+	def test_outcome_releases_owned_claim_when_edit_never_starts(self) -> None:
+		arguments = (
+			"record-outcome",
+			"--reminder-id",
+			REMINDER_ID,
+			"--outcome",
+			"Retry after edit launch failure.",
+			"--finished-at",
+			FINISHED_AT,
+			"--execute",
+		)
+		python_bin = self.root / "python-bin"
+		python_bin.mkdir()
+		(python_bin / "python3").symlink_to(sys.executable)
+		failed = self.run_cli(
+			*arguments,
+			env_update={
+				"FAKE_REMINDERS_REMOVE_AFTER_COMPLETED": "1",
+				"PATH": f"{self.bin_dir}:{python_bin}:/usr/bin",
+			},
+		)
+		self.assertEqual(failed.returncode, 1)
+		self.assertIn("No such file or directory", failed.stderr)
+		self.assertEqual(list((self.state_dir / "outcome-claims").glob("*.json")), [])
+
+		self._write_fake_remindctl()
+		retried = self.result(self.run_cli(*arguments))
+		self.assertEqual(retried["status"], "recorded")
+		self.assertEqual(len([call for call in self.calls() if call[0] == "edit"]), 1)
+
 	def test_outcome_rejects_missing_delivery_receipt(self) -> None:
 		for path in (self.state_dir / "receipts").glob("*.json"):
 			path.unlink()
@@ -974,6 +1007,29 @@ else:
 			["remindctl", "doctor", "--for-agent", "--json"],
 			timeout_seconds=30,
 		)
+
+	def test_doctor_rejects_malformed_link_handler_plist_without_traceback(self) -> None:
+		home = self.root / "home"
+		info_path = home / "Applications" / "Agent Attention Link.app" / "Contents" / "Info.plist"
+		info_path.parent.mkdir(parents=True)
+		info_path.write_text("truncated", encoding="utf-8")
+		completed = self.run_cli("doctor", env_update={"HOME": str(home)})
+		self.assertEqual(completed.returncode, 1)
+		self.assertIn("Info.plist is malformed", completed.stderr)
+		self.assertNotIn("Traceback", completed.stderr)
+		self.assertEqual(json.loads(completed.stdout)["status"], "error")
+
+	def test_doctor_rejects_malformed_link_handler_plist_shape(self) -> None:
+		home = self.root / "home"
+		info_path = home / "Applications" / "Agent Attention Link.app" / "Contents" / "Info.plist"
+		info_path.parent.mkdir(parents=True)
+		with info_path.open("wb") as handle:
+			plistlib.dump({"CFBundleURLTypes": [[]]}, handle)
+		completed = self.run_cli("doctor", env_update={"HOME": str(home)})
+		self.assertEqual(completed.returncode, 1)
+		self.assertIn("Info.plist URL types are malformed", completed.stderr)
+		self.assertNotIn("Traceback", completed.stderr)
+		self.assertEqual(json.loads(completed.stdout)["status"], "error")
 
 	def test_record_delivery_rejects_invalid_event_ids_and_non_boolean_proof(self) -> None:
 		for invalid_id in ("../requests/forged", "A" * 64, "0" * 63):
