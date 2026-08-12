@@ -1270,6 +1270,30 @@ else:
 		self.assertEqual(request["event_id"], self._event_id())
 		self.assertEqual(request["delivered_at"], "2026-08-10T05:41:00Z")
 
+	def test_poll_never_demotes_completed_request_from_existing_delivery_receipt(self) -> None:
+		request_dir = self.state_dir / "requests"
+		request_dir.mkdir()
+		request_path = request_dir / f"{THREAD_ID}.json"
+		request_path.write_text(
+			json.dumps(
+				{
+					"version": 1,
+					"request_id": "0" * 64,
+					"thread_id": THREAD_ID,
+					"reminder_id": REMINDER_ID,
+					"status": "completed",
+					"outcome_id": "1" * 64,
+				}
+			),
+			encoding="utf-8",
+		)
+
+		result = self.result(self.run_cli("poll"))
+		self.assertEqual(result["status"], "waiting")
+		request = json.loads(request_path.read_text())
+		self.assertEqual(request["status"], "completed")
+		self.assertEqual(request["outcome_id"], "1" * 64)
+
 	def test_outcome_rejects_truthy_non_boolean_completion(self) -> None:
 		self.target["isCompleted"] = "false"
 		self._write_inventory()

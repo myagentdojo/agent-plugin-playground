@@ -422,6 +422,8 @@ def update_request_state(
 	state = require_json_object(load_json(path), document_name="request state")
 	if state.get("reminder_id") != mapping["reminder_id"]:
 		return
+	if state.get("status") == "completed" and status != "completed":
+		return
 	updated = {
 		**state,
 		"status": status,
