@@ -37,6 +37,13 @@ class ContractError(Exception):
 	"""Raised when a gate cannot be handled without guessing."""
 
 
+class ContractArgumentParser(argparse.ArgumentParser):
+	"""Route public usage errors through the structured result boundary."""
+
+	def error(self, message: str) -> NoReturn:
+		raise ContractError(f"invalid command arguments: {message}")
+
+
 def default_state_dir() -> Path:
 	"""Return the private user-owned runtime state directory."""
 	xdg_state = os.environ.get("XDG_STATE_HOME")
@@ -50,8 +57,11 @@ def default_state_dir() -> Path:
 
 def load_json(path: Path) -> Any:
 	"""Load one JSON document from disk."""
-	with path.open(encoding="utf-8") as handle:
-		return json.load(handle)
+	try:
+		with path.open(encoding="utf-8") as handle:
+			return json.load(handle)
+	except UnicodeDecodeError as error:
+		raise ContractError(f"persisted JSON is not valid UTF-8: {path.name}") from error
 
 
 def require_json_object(value: Any, *, document_name: str) -> dict[str, Any]:
@@ -345,6 +355,29 @@ def completed_or_active_request_result(
 		raise ContractError("request state request_id must be a lowercase SHA-256 digest")
 	if existing.get("thread_id") != thread_id:
 		raise ContractError("request state thread_id does not match its owner path")
+	if status == "declared":
+		matching_mappings = []
+		for mapping_path in sorted((state_dir / "gates").glob("*.json")):
+			mapping = validate_gate_mapping(
+				load_json(mapping_path), expected_reminder_id=mapping_path.stem
+			)
+			if (
+				mapping.get("request_id") == existing_request_id
+				and mapping["thread_id"] == thread_id
+			):
+				matching_mappings.append(mapping)
+		if len(matching_mappings) > 1:
+			raise ContractError("declared request resolves to multiple published gates")
+		if matching_mappings:
+			mapping = matching_mappings[0]
+			existing = {
+				**existing,
+				"status": "gated",
+				"reminder_id": mapping["reminder_id"],
+				"updated_at": datetime.now(timezone.utc).isoformat(),
+			}
+			write_json(request_path(state_dir, thread_id), existing)
+			status = "gated"
 	unresolved_attempt = status == "declared" or (
 		status == "repair"
 		and (state_dir / "request-claims" / f"{existing_request_id}.json").exists()
@@ -397,6 +430,35 @@ def update_request_state(
 		if value is None:
 			updated.pop(field, None)
 	write_json(path, updated)
+
+
+def reconcile_declared_request(
+	state_dir: Path, mapping: dict[str, Any]
+) -> None:
+	"""Bind a published gate back to request state after a publication crash."""
+	request_identifier = mapping.get("request_id")
+	if not isinstance(request_identifier, str):
+		return
+	path = request_path(state_dir, mapping["thread_id"])
+	if not path.exists():
+		return
+	state = require_json_object(load_json(path), document_name="request state")
+	if state.get("status") != "declared":
+		return
+	if (
+		state.get("request_id") != request_identifier
+		or state.get("thread_id") != mapping["thread_id"]
+	):
+		return
+	write_json(
+		path,
+		{
+			**state,
+			"status": "gated",
+			"reminder_id": mapping["reminder_id"],
+			"updated_at": datetime.now(timezone.utc).isoformat(),
+		},
+	)
 
 
 def _submit_approval(args: argparse.Namespace) -> dict[str, Any]:
@@ -492,6 +554,16 @@ def _submit_approval(args: argparse.Namespace) -> dict[str, Any]:
 			return existing_result
 
 	request_claim_path = state_dir / "request-claims" / f"{request_identifier}.json"
+	if request_claim_path.exists() and not path.exists():
+		abandoned_claim = require_json_object(
+			load_json(request_claim_path), document_name="request claim"
+		)
+		if (
+			abandoned_claim.get("request_id") != request_identifier
+			or abandoned_claim.get("thread_id") != thread_id
+		):
+			raise ContractError("request claim does not match its exact owner")
+		request_claim_path.unlink()
 	if not write_json(
 		request_claim_path,
 		{
@@ -1100,6 +1172,7 @@ def poll(args: argparse.Namespace) -> dict[str, Any]:
 		mapping = validate_gate_mapping(
 			load_json(mapping_path), expected_reminder_id=mapping_path.stem
 		)
+		reconcile_declared_request(state_dir, mapping)
 		identifier = event_id(mapping)
 		receipt_path = state_dir / "receipts" / f"{identifier}.json"
 		if receipt_path.exists():
@@ -1473,7 +1546,7 @@ def commands(_: argparse.Namespace) -> dict[str, Any]:
 
 def parser() -> argparse.ArgumentParser:
 	"""Build the stable command surface."""
-	command = argparse.ArgumentParser(
+	command = ContractArgumentParser(
 		prog="agent-attention",
 		description="Create and deliver bounded Apple Reminders approval gates.",
 	)

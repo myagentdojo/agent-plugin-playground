@@ -310,6 +310,21 @@ else:
 		self.assertEqual(completed.returncode, 1)
 		self.assertIn("config must be a JSON object", completed.stderr)
 		self.assertNotIn("Traceback", completed.stderr)
+
+	def test_invalid_utf8_uses_the_structured_error_boundary(self) -> None:
+		(self.state_dir / "config.json").write_bytes(b"\xff")
+		completed = self.run_cli("poll")
+		self.assertEqual(completed.returncode, 1)
+		self.assertIn("persisted JSON is not valid UTF-8", completed.stderr)
+		self.assertNotIn("Traceback", completed.stderr)
+		self.assertEqual(json.loads(completed.stdout)["status"], "error")
+
+	def test_argparse_usage_error_uses_the_structured_error_boundary(self) -> None:
+		completed = self.run_cli("submit", "--bad")
+		self.assertEqual(completed.returncode, 1)
+		self.assertIn("invalid command arguments", completed.stderr)
+		self.assertNotIn("Traceback", completed.stderr)
+		self.assertEqual(json.loads(completed.stdout)["status"], "error")
 		result = json.loads(completed.stdout)
 		self.assertEqual(result["status"], "error")
 		self.assertEqual(result["error_category"], "contract_or_runtime")
@@ -843,6 +858,45 @@ else:
 		result = self.result(self.run_cli(*self.submit_arguments(), "--execute"))
 		self.assertEqual(result["status"], "gated")
 		self.assertFalse(lock_path.exists())
+		self.assertEqual(len([call for call in self.calls() if call[0] == "add"]), 1)
+
+	def test_submit_reclaims_claim_abandoned_before_request_declaration(self) -> None:
+		arguments = self.submit_arguments()
+		preview = self.result(self.run_cli(*arguments))
+		claim_dir = self.state_dir / "request-claims"
+		claim_dir.mkdir()
+		(claim_dir / f"{preview['request_id']}.json").write_text(
+			json.dumps(
+				{
+					"request_id": preview["request_id"],
+					"thread_id": THREAD_ID,
+				}
+			),
+			encoding="utf-8",
+		)
+
+		result = self.result(self.run_cli(*arguments, "--execute"))
+		self.assertEqual(result["status"], "gated")
+		self.assertEqual(len([call for call in self.calls() if call[0] == "add"]), 1)
+
+	def test_submit_reconciles_mapping_published_before_request_update(self) -> None:
+		arguments = self.submit_arguments()
+		first = self.result(self.run_cli(*arguments, "--execute"))
+		request_path = self.state_dir / "requests" / f"{THREAD_ID}.json"
+		request = json.loads(request_path.read_text())
+		request["status"] = "declared"
+		request.pop("reminder_id")
+		request_path.write_text(json.dumps(request), encoding="utf-8")
+
+		polled = self.result(self.run_cli("poll"))
+		self.assertEqual(polled["status"], "waiting")
+		reconciled = json.loads(request_path.read_text())
+		self.assertEqual(reconciled["status"], "gated")
+		self.assertEqual(reconciled["reminder_id"], first["reminder_id"])
+
+		retried = self.result(self.run_cli(*arguments, "--execute"))
+		self.assertEqual(retried["status"], "already_gated")
+		self.assertEqual(retried["reminder_id"], first["reminder_id"])
 		self.assertEqual(len([call for call in self.calls() if call[0] == "add"]), 1)
 
 	def test_submit_blocks_distinct_intent_while_declared_attempt_is_unresolved(self) -> None:
