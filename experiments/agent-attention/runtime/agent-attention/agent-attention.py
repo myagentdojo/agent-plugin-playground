@@ -1176,6 +1176,7 @@ def poll(args: argparse.Namespace) -> dict[str, Any]:
 		timeout_seconds=getattr(args, "command_timeout_seconds", None),
 	)
 	items_by_id = {item["id"]: item for item in inventory}
+	preserved_claim: dict[str, Any] | None = None
 
 	for mapping_path in mapping_paths:
 		mapping = validate_gate_mapping(
@@ -1266,12 +1267,13 @@ def poll(args: argparse.Namespace) -> dict[str, Any]:
 
 		claim_path = state_dir / "claims" / f"{identifier}.json"
 		if claim_path.exists():
-			return base_result(
+			preserved_claim = preserved_claim or base_result(
 				"claimed",
 				changed=False,
 				event_id=identifier,
 				repair="inspect the destination task before releasing this claim",
 			)
+			continue
 
 		claim = {
 			"claimed_at": datetime.now(timezone.utc).isoformat(),
@@ -1282,7 +1284,10 @@ def poll(args: argparse.Namespace) -> dict[str, Any]:
 			"approval_meaning": mapping["approval_meaning"],
 		}
 		if not write_json(claim_path, claim, exclusive=True):
-			return base_result("claimed", changed=False, event_id=identifier)
+			preserved_claim = preserved_claim or base_result(
+				"claimed", changed=False, event_id=identifier
+			)
+			continue
 		return base_result(
 			"deliver",
 			changed=True,
@@ -1296,7 +1301,9 @@ def poll(args: argparse.Namespace) -> dict[str, Any]:
 			next_safe_action="deliver once with the Codex task tool, then record-delivery",
 		)
 
-	return base_result("waiting", changed=False, open_gate_count=len(mapping_paths))
+	return preserved_claim or base_result(
+		"waiting", changed=False, open_gate_count=len(mapping_paths)
+	)
 
 
 def watch(args: argparse.Namespace) -> dict[str, Any]:

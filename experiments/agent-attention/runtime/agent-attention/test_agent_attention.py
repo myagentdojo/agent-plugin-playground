@@ -1337,6 +1337,38 @@ else:
 		self.assertEqual(broken["status"], "repair")
 		self.assertIn(REMINDER_ID, broken["repair"])
 
+	def test_poll_preserves_stale_claim_and_delivers_a_later_gate(self) -> None:
+		for path in (self.state_dir / "receipts").glob("*.json"):
+			path.unlink()
+		claim_dir = self.state_dir / "claims"
+		claim_dir.mkdir()
+		(claim_dir / f"{self._event_id()}.json").write_text("{}", encoding="utf-8")
+		later_meaning = "Approve the later bounded gate only."
+		later_mapping = {
+			**self.mapping,
+			"reminder_id": OTHER_REMINDER_ID,
+			"expected_title": "[APPROVE] Later bounded gate",
+			"required_notes_line": f"Approval meaning: {later_meaning}",
+			"approval_meaning": later_meaning,
+		}
+		(self.state_dir / "gates" / f"{OTHER_REMINDER_ID}.json").write_text(
+			json.dumps(later_mapping), encoding="utf-8"
+		)
+		self.other.update(
+			{
+				"title": later_mapping["expected_title"],
+				"notes": later_mapping["required_notes_line"],
+				"isCompleted": True,
+				"completionDate": "2026-08-10T05:50:00Z",
+			}
+		)
+		self._write_inventory()
+
+		result = self.result(self.run_cli("poll"))
+		self.assertEqual(result["status"], "deliver")
+		self.assertIn(later_meaning, result["prompt"])
+		self.assertTrue((claim_dir / f"{self._event_id()}.json").exists())
+
 	def test_doctor_bounds_remindctl_and_rejects_non_object_json(self) -> None:
 		run_json = mock.Mock(return_value=[])
 		with mock.patch.object(AGENT_ATTENTION, "run_json", run_json):
