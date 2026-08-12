@@ -304,6 +304,44 @@ else:
 		self.assertEqual(result["status"], "error")
 		self.assertEqual(result["error_category"], "contract_or_runtime")
 
+	def test_configure_rejects_empty_binding_before_overwriting_config(self) -> None:
+		config_path = self.state_dir / "config.json"
+		before = config_path.read_text()
+		completed = self.run_cli(
+			"configure", "--list-id", "", "--list-name", "Agent Attention"
+		)
+		self.assertEqual(completed.returncode, 1)
+		self.assertIn("list ID must be nonempty text", completed.stderr)
+		self.assertNotIn("Traceback", completed.stderr)
+		self.assertEqual(config_path.read_text(), before)
+
+	def test_poll_rejects_non_object_gate_mapping_before_deriving_event_id(self) -> None:
+		(self.state_dir / "gates" / f"{REMINDER_ID}.json").write_text(
+			"[]", encoding="utf-8"
+		)
+		completed = self.run_cli("poll")
+		self.assertEqual(completed.returncode, 1)
+		self.assertIn("gate mapping must be a JSON object", completed.stderr)
+		self.assertNotIn("Traceback", completed.stderr)
+
+	def test_poll_rejects_incomplete_gate_mapping_before_deriving_event_id(self) -> None:
+		mapping = {**self.mapping}
+		mapping.pop("approval_meaning")
+		(self.state_dir / "gates" / f"{REMINDER_ID}.json").write_text(
+			json.dumps(mapping), encoding="utf-8"
+		)
+		completed = self.run_cli("poll")
+		self.assertEqual(completed.returncode, 1)
+		self.assertIn("gate mapping approval_meaning must be nonempty text", completed.stderr)
+		self.assertNotIn("Traceback", completed.stderr)
+
+	def test_poll_rejects_non_object_inventory_entry(self) -> None:
+		self.inventory_path.write_text(json.dumps([self.target, []]), encoding="utf-8")
+		completed = self.run_cli("poll")
+		self.assertEqual(completed.returncode, 1)
+		self.assertIn("inventory entries must be JSON objects", completed.stderr)
+		self.assertNotIn("Traceback", completed.stderr)
+
 	def test_outcome_preview_is_read_only_and_exact(self) -> None:
 		result = self.result(
 			self.run_cli(
@@ -335,6 +373,60 @@ else:
 		inventory = json.loads(self.inventory_path.read_text())
 		target = next(item for item in inventory if item["id"] == REMINDER_ID)
 		self.assertNotIn("Outcome:", target["notes"])
+
+	def test_outcome_rejects_non_object_delivery_receipt(self) -> None:
+		receipt_path = next((self.state_dir / "receipts").glob("*.json"))
+		receipt_path.write_text("[]", encoding="utf-8")
+		completed = self.run_cli(
+			"record-outcome",
+			"--reminder-id",
+			REMINDER_ID,
+			"--outcome",
+			"Should fail.",
+			"--finished-at",
+			FINISHED_AT,
+		)
+		self.assertEqual(completed.returncode, 1)
+		self.assertIn("delivery receipt must be a JSON object", completed.stderr)
+		self.assertNotIn("Traceback", completed.stderr)
+		self.assertEqual(self.calls(), [])
+
+	def test_outcome_rejects_non_object_outcome_receipt(self) -> None:
+		outcomes_dir = self.state_dir / "outcomes"
+		outcomes_dir.mkdir()
+		(outcomes_dir / f"{self._event_id()}.json").write_text("[]", encoding="utf-8")
+		completed = self.run_cli(
+			"record-outcome",
+			"--reminder-id",
+			REMINDER_ID,
+			"--outcome",
+			"Should fail.",
+			"--finished-at",
+			FINISHED_AT,
+		)
+		self.assertEqual(completed.returncode, 1)
+		self.assertIn("outcome receipt must be a JSON object", completed.stderr)
+		self.assertNotIn("Traceback", completed.stderr)
+		self.assertEqual(self.calls(), [])
+
+	def test_outcome_rejects_non_object_outcome_claim(self) -> None:
+		claim_dir = self.state_dir / "outcome-claims"
+		claim_dir.mkdir()
+		(claim_dir / f"{self._event_id()}.json").write_text("[]", encoding="utf-8")
+		completed = self.run_cli(
+			"record-outcome",
+			"--reminder-id",
+			REMINDER_ID,
+			"--outcome",
+			"Should fail.",
+			"--finished-at",
+			FINISHED_AT,
+			"--execute",
+		)
+		self.assertEqual(completed.returncode, 1)
+		self.assertIn("outcome claim must be a JSON object", completed.stderr)
+		self.assertNotIn("Traceback", completed.stderr)
+		self.assertEqual(self.calls(), [])
 
 	def test_outcome_rejects_path_like_reminder_id_before_mapping_lookup(self) -> None:
 		malicious_id = f"../requests/{THREAD_ID}"
@@ -702,6 +794,16 @@ else:
 		)
 		self.assertEqual(request["status"], "repair")
 
+	def test_submit_rejects_non_object_request_state_without_traceback(self) -> None:
+		request_dir = self.state_dir / "requests"
+		request_dir.mkdir()
+		(request_dir / f"{THREAD_ID}.json").write_text("[]", encoding="utf-8")
+		completed = self.run_cli(*self.submit_arguments())
+		self.assertEqual(completed.returncode, 1)
+		self.assertIn("request state must be a JSON object", completed.stderr)
+		self.assertNotIn("Traceback", completed.stderr)
+		self.assertEqual(self.calls(), [])
+
 	def test_stop_check_continues_declared_or_delivered_state_without_reading_prose(self) -> None:
 		request_dir = self.state_dir / "requests"
 		request_dir.mkdir()
@@ -732,6 +834,27 @@ else:
 		request_dir = self.state_dir / "requests"
 		request_dir.mkdir()
 		(request_dir / f"{THREAD_ID}.json").write_text("[]", encoding="utf-8")
+		completed = self.run_cli("check-stop", "--thread-id", THREAD_ID)
+		result = self.result(completed)
+		self.assertEqual(result["status"], "repair_needed")
+		self.assertEqual(result["hook_action"], "continue")
+		self.assertIn("owner state is malformed", result["reason"])
+		self.assertNotIn("Traceback", completed.stderr)
+
+	def test_stop_check_rejects_non_object_delivered_intent_without_traceback(self) -> None:
+		request_dir = self.state_dir / "requests"
+		request_dir.mkdir()
+		(request_dir / f"{THREAD_ID}.json").write_text(
+			json.dumps(
+				{
+					"version": 1,
+					"thread_id": THREAD_ID,
+					"status": "delivered",
+					"intent": [],
+				}
+			),
+			encoding="utf-8",
+		)
 		completed = self.run_cli("check-stop", "--thread-id", THREAD_ID)
 		result = self.result(completed)
 		self.assertEqual(result["status"], "repair_needed")

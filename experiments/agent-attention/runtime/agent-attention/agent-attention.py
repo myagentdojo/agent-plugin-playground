@@ -52,6 +52,29 @@ def load_json(path: Path) -> Any:
 		return json.load(handle)
 
 
+def require_json_object(value: Any, *, document_name: str) -> dict[str, Any]:
+	"""Require one JSON object before field access."""
+	if not isinstance(value, dict):
+		raise ContractError(f"{document_name} must be a JSON object")
+	return value
+
+
+def require_nonempty_text(value: Any, *, field_name: str) -> str:
+	"""Require one nonempty string at a persisted contract boundary."""
+	if not isinstance(value, str) or not value.strip():
+		raise ContractError(f"{field_name} must be nonempty text")
+	return value
+
+
+def require_json_object_array(value: Any, *, document_name: str) -> list[dict[str, Any]]:
+	"""Require one JSON array containing only objects."""
+	if not isinstance(value, list):
+		raise ContractError(f"{document_name} must be a JSON array")
+	if any(not isinstance(item, dict) for item in value):
+		raise ContractError(f"{document_name} entries must be JSON objects")
+	return value
+
+
 def write_json(path: Path, value: Any, *, exclusive: bool = False) -> bool:
 	"""Write private JSON atomically enough for single-host gate custody."""
 	path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -125,29 +148,31 @@ def read_config(state_dir: Path) -> dict[str, Any]:
 		raise ContractError(
 			"not configured; run configure with the exact Agent Attention list ID"
 		)
-	config = load_json(path)
-	if not isinstance(config, dict):
-		raise ContractError("config must be a JSON object")
+	config = require_json_object(load_json(path), document_name="config")
 	if config.get("version") != 1:
 		raise ContractError("unsupported config version")
 	list_config = config.get("list")
-	if not isinstance(list_config, dict) or not list_config.get("id") or not list_config.get("name"):
+	if not isinstance(list_config, dict):
 		raise ContractError("configured list ID and name are required")
+	require_nonempty_text(list_config.get("id"), field_name="configured list ID")
+	require_nonempty_text(list_config.get("name"), field_name="configured list name")
 	return config
 
 
 def configure(args: argparse.Namespace) -> dict[str, Any]:
 	"""Persist one explicit Apple Reminders list binding."""
 	state_dir: Path = args.state_dir
+	list_id = require_nonempty_text(args.list_id, field_name="list ID")
+	list_name = require_nonempty_text(args.list_name, field_name="list name")
 	config = {
 		"version": 1,
-		"list": {"id": args.list_id, "name": args.list_name},
+		"list": {"id": list_id, "name": list_name},
 	}
 	write_json(state_dir / "config.json", config)
 	return base_result(
 		"configured",
 		changed=True,
-		list={"id": args.list_id, "name": args.list_name},
+		list={"id": list_id, "name": list_name},
 		next_safe_action="run doctor",
 	)
 
@@ -243,9 +268,10 @@ def request_path(state_dir: Path, thread_id: str) -> Path:
 
 
 def completed_or_active_request_result(
-	existing: dict[str, Any], request_identifier: str, thread_id: str
+	existing: Any, request_identifier: str, thread_id: str
 ) -> dict[str, Any] | None:
 	"""Return an idempotent result or reject a distinct active gate."""
+	existing = require_json_object(existing, document_name="request state")
 	status = existing.get("status")
 	if status not in {"gated", "delivered", "completed"}:
 		return None
@@ -272,7 +298,7 @@ def update_request_state(
 	path = request_path(state_dir, mapping["thread_id"])
 	if not path.exists():
 		return
-	state = load_json(path)
+	state = require_json_object(load_json(path), document_name="request state")
 	if state.get("reminder_id") != mapping["reminder_id"]:
 		return
 	updated = {
@@ -574,9 +600,7 @@ def read_inventory(
 		],
 		timeout_seconds=timeout_seconds,
 	)
-	if not isinstance(inventory, list):
-		raise ContractError("remindctl inventory must be a JSON array")
-	return inventory
+	return require_json_object_array(inventory, document_name="remindctl inventory")
 
 
 def event_id(mapping: dict[str, Any]) -> str:
@@ -623,6 +647,32 @@ def validate_event_binding(
 	if value["event_id"] != identifier or event_id(value) != identifier:
 		raise ContractError(f"{document_name} does not match the exact event ID")
 	return value
+
+
+def validate_gate_mapping(
+	value: Any, *, expected_reminder_id: str | None = None
+) -> dict[str, Any]:
+	"""Require one complete gate mapping before deriving identity."""
+	mapping = require_json_object(value, document_name="gate mapping")
+	if mapping.get("version") != 1:
+		raise ContractError("unsupported gate mapping version")
+	reminder_id = validate_reminder_id(mapping.get("reminder_id"))
+	if expected_reminder_id is not None and reminder_id != expected_reminder_id:
+		raise ContractError("gate mapping stable reminder ID does not match")
+	for field in (
+		"approval_meaning",
+		"expected_title",
+		"required_notes_line",
+		"thread_id",
+	):
+		require_nonempty_text(mapping.get(field), field_name=f"gate mapping {field}")
+	validate_thread_id(mapping["thread_id"])
+	list_config = mapping.get("list")
+	if not isinstance(list_config, dict):
+		raise ContractError("gate mapping list must be a JSON object")
+	require_nonempty_text(list_config.get("id"), field_name="gate mapping list ID")
+	require_nonempty_text(list_config.get("name"), field_name="gate mapping list name")
+	return mapping
 
 
 def outcome_id(mapping: dict[str, Any], outcome: str, finished_at: str) -> str:
@@ -679,19 +729,14 @@ def read_gate_mapping(state_dir: Path, reminder_id: str) -> dict[str, Any]:
 	path = state_dir / "gates" / f"{reminder_id}.json"
 	if not path.exists():
 		raise ContractError("no gate mapping exists for the exact stable reminder ID")
-	mapping = load_json(path)
-	if mapping.get("reminder_id") != reminder_id:
-		raise ContractError("gate mapping stable reminder ID does not match")
-	for field in ("approval_meaning", "expected_title", "required_notes_line", "thread_id"):
-		if not mapping.get(field):
-			raise ContractError(f"gate mapping lacks required field: {field}")
-	return mapping
+	return validate_gate_mapping(load_json(path), expected_reminder_id=reminder_id)
 
 
 def validate_delivery_receipt(
-	receipt: dict[str, Any], mapping: dict[str, Any], identifier: str
+	receipt: Any, mapping: dict[str, Any], identifier: str
 ) -> None:
 	"""Require one receipt bound to the exact delivered approval contract."""
+	receipt = require_json_object(receipt, document_name="delivery receipt")
 	expected = {
 		"approval_meaning": mapping["approval_meaning"],
 		"event_id": identifier,
@@ -718,8 +763,9 @@ def read_exact_completed_reminder(reminder_id: str, list_id: str) -> dict[str, A
 			"--no-input",
 		]
 	)
-	if not isinstance(inventory, list):
-		raise ContractError("completed reminder inventory must be a JSON array")
+	inventory = require_json_object_array(
+		inventory, document_name="completed reminder inventory"
+	)
 	matches = [item for item in inventory if item.get("id") == reminder_id]
 	if len(matches) != 1:
 		raise ContractError("exact stable reminder ID did not resolve once in Completed history")
@@ -758,7 +804,9 @@ def record_outcome(args: argparse.Namespace) -> dict[str, Any]:
 	identifier = outcome_id(mapping, outcome, finished_at)
 	receipt_path = state_dir / "outcomes" / f"{delivery_id}.json"
 	if receipt_path.exists():
-		receipt = load_json(receipt_path)
+		receipt = require_json_object(
+			load_json(receipt_path), document_name="outcome receipt"
+		)
 		if receipt.get("outcome_id") != identifier:
 			raise ContractError("a different terminal outcome is already recorded for this gate")
 		update_request_state(
@@ -798,7 +846,9 @@ def record_outcome(args: argparse.Namespace) -> dict[str, Any]:
 	}
 	claim_created = write_json(claim_path, claim, exclusive=True)
 	if not claim_created:
-		existing_claim = load_json(claim_path)
+		existing_claim = require_json_object(
+			load_json(claim_path), document_name="outcome claim"
+		)
 		if existing_claim.get("outcome_id") != identifier:
 			raise ContractError("a different terminal outcome claim already exists for this gate")
 
@@ -911,7 +961,9 @@ def poll(args: argparse.Namespace) -> dict[str, Any]:
 	items_by_id = {item.get("id"): item for item in inventory}
 
 	for mapping_path in mapping_paths:
-		mapping = load_json(mapping_path)
+		mapping = validate_gate_mapping(
+			load_json(mapping_path), expected_reminder_id=mapping_path.stem
+		)
 		identifier = event_id(mapping)
 		receipt_path = state_dir / "receipts" / f"{identifier}.json"
 		if receipt_path.exists():
@@ -1125,7 +1177,16 @@ def check_stop(args: argparse.Namespace) -> dict[str, Any]:
 			reason="Agent Attention blocker was declared but has no gate or repair result. Finish submit or record an actionable repair.",
 		)
 	if status == "delivered":
-		continuation = state.get("intent", {}).get("continuation")
+		intent = state.get("intent")
+		if not isinstance(intent, dict) or not isinstance(intent.get("continuation"), str):
+			return base_result(
+				"repair_needed",
+				changed=False,
+				thread_id=thread_id,
+				hook_action="continue",
+				reason="Agent Attention owner state is malformed. Repair the exact request state before stopping.",
+			)
+		continuation = intent["continuation"]
 		return base_result(
 			"resume_needed",
 			changed=False,
