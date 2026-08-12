@@ -508,6 +508,31 @@ else:
 		self.assertEqual(completed.returncode, 1)
 		self.assertIn("Completed history", completed.stderr)
 
+	def test_outcome_pre_edit_failure_releases_owned_claim_for_retry(self) -> None:
+		arguments = (
+			"record-outcome",
+			"--reminder-id",
+			REMINDER_ID,
+			"--outcome",
+			"Retryable terminal result.",
+			"--finished-at",
+			FINISHED_AT,
+			"--execute",
+		)
+		self.target["isCompleted"] = False
+		self.target.pop("completionDate")
+		self._write_inventory()
+		failed = self.run_cli(*arguments)
+		self.assertEqual(failed.returncode, 1)
+		self.assertEqual(list((self.state_dir / "outcome-claims").glob("*.json")), [])
+
+		self.target["isCompleted"] = True
+		self.target["completionDate"] = "2026-08-10T05:40:00Z"
+		self._write_inventory()
+		retried = self.result(self.run_cli(*arguments))
+		self.assertEqual(retried["status"], "recorded")
+		self.assertEqual(len([call for call in self.calls() if call[0] == "edit"]), 1)
+
 	def test_outcome_rejects_missing_delivery_receipt(self) -> None:
 		for path in (self.state_dir / "receipts").glob("*.json"):
 			path.unlink()
@@ -702,6 +727,17 @@ else:
 		delivered = self.result(self.run_cli("check-stop", "--thread-id", THREAD_ID))
 		self.assertEqual(delivered["hook_action"], "continue")
 		self.assertIn("Run the exact continuation", delivered["reason"])
+
+	def test_stop_check_rejects_non_object_request_state_without_traceback(self) -> None:
+		request_dir = self.state_dir / "requests"
+		request_dir.mkdir()
+		(request_dir / f"{THREAD_ID}.json").write_text("[]", encoding="utf-8")
+		completed = self.run_cli("check-stop", "--thread-id", THREAD_ID)
+		result = self.result(completed)
+		self.assertEqual(result["status"], "repair_needed")
+		self.assertEqual(result["hook_action"], "continue")
+		self.assertIn("owner state is malformed", result["reason"])
+		self.assertNotIn("Traceback", completed.stderr)
 
 	def test_watch_detects_and_records_delivery_under_fifteen_seconds(self) -> None:
 		self.target["isCompleted"] = False

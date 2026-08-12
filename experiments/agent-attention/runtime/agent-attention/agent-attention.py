@@ -802,8 +802,13 @@ def record_outcome(args: argparse.Namespace) -> dict[str, Any]:
 		if existing_claim.get("outcome_id") != identifier:
 			raise ContractError("a different terminal outcome claim already exists for this gate")
 
-	before = read_exact_completed_reminder(args.reminder_id, config["list"]["id"])
-	validate_outcome_target(before, mapping, config)
+	try:
+		before = read_exact_completed_reminder(args.reminder_id, config["list"]["id"])
+		validate_outcome_target(before, mapping, config)
+	except (ContractError, json.JSONDecodeError, OSError, subprocess.SubprocessError):
+		if claim_created:
+			claim_path.unlink(missing_ok=True)
+		raise
 	current_notes = before.get("notes") or ""
 	updated_notes = append_outcome_notes(current_notes, addition)
 	if contains_outcome_notes(current_notes, addition):
@@ -1098,7 +1103,11 @@ def check_stop(args: argparse.Namespace) -> dict[str, Any]:
 			hook_action="allow",
 		)
 	state = load_json(path)
-	if state.get("thread_id") != thread_id or state.get("version") != 1:
+	if (
+		not isinstance(state, dict)
+		or state.get("thread_id") != thread_id
+		or state.get("version") != 1
+	):
 		return base_result(
 			"repair_needed",
 			changed=False,
