@@ -147,6 +147,10 @@ elif args[0] == "add":
     }
     if os.environ.get("FAKE_REMINDERS_NEW_NOTES_JSON"):
         reminder["notes"] = json.loads(os.environ["FAKE_REMINDERS_NEW_NOTES_JSON"])
+    if os.environ.get("FAKE_REMINDERS_NEW_COMPLETION_JSON"):
+        reminder["isCompleted"] = json.loads(os.environ["FAKE_REMINDERS_NEW_COMPLETION_JSON"])
+    if os.environ.get("FAKE_REMINDERS_OMIT_NEW_COMPLETION") == "1":
+        reminder.pop("isCompleted")
     inventory.append(reminder)
     inventory_path.write_text(json.dumps(inventory), encoding="utf-8")
     print(json.dumps(reminder))
@@ -841,6 +845,29 @@ else:
 		self.assertFalse(lock_path.exists())
 		self.assertEqual(len([call for call in self.calls() if call[0] == "add"]), 1)
 
+	def test_submit_blocks_distinct_intent_while_declared_attempt_is_unresolved(self) -> None:
+		request_dir = self.state_dir / "requests"
+		request_dir.mkdir()
+		(request_dir / f"{THREAD_ID}.json").write_text(
+			json.dumps(
+				{
+					"version": 1,
+					"request_id": "0" * 64,
+					"thread_id": THREAD_ID,
+					"status": "declared",
+				}
+			),
+			encoding="utf-8",
+		)
+		completed = self.run_cli(
+			*self.submit_arguments(action="Approve a different action"),
+			"--execute",
+		)
+		self.assertEqual(completed.returncode, 1)
+		self.assertIn("unresolved gate creation attempt", completed.stderr)
+		self.assertNotIn("Traceback", completed.stderr)
+		self.assertEqual(self.calls(), [])
+
 	def test_failed_submit_releases_the_per_thread_request_lock(self) -> None:
 		completed = self.run_cli(
 			*self.submit_arguments(),
@@ -901,6 +928,19 @@ else:
 		)
 		self.assertEqual(request["status"], "repair")
 		self.assertEqual(len([call for call in self.calls() if call[0] == "add"]), 1)
+
+	def test_submit_requires_literal_false_created_completion_state(self) -> None:
+		completed = self.run_cli(
+			*self.submit_arguments(),
+			"--execute",
+			env_update={"FAKE_REMINDERS_NEW_COMPLETION_JSON": "0"},
+		)
+		self.assertEqual(completed.returncode, 1)
+		self.assertIn(
+			"created reminder failed exact verification: isCompleted",
+			completed.stderr,
+		)
+		self.assertNotIn("Traceback", completed.stderr)
 
 	def test_submit_rejects_non_object_request_state_without_traceback(self) -> None:
 		request_dir = self.state_dir / "requests"

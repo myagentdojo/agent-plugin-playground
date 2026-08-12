@@ -333,14 +333,35 @@ def request_path(state_dir: Path, thread_id: str) -> Path:
 
 
 def completed_or_active_request_result(
-	existing: Any, request_identifier: str, thread_id: str
+	state_dir: Path, existing: Any, request_identifier: str, thread_id: str
 ) -> dict[str, Any] | None:
 	"""Return an idempotent result or reject a distinct active gate."""
 	existing = require_json_object(existing, document_name="request state")
 	status = existing.get("status")
+	existing_request_id = existing.get("request_id")
+	if not isinstance(existing_request_id, str) or len(existing_request_id) != 64 or any(
+		character not in "0123456789abcdef" for character in existing_request_id
+	):
+		raise ContractError("request state request_id must be a lowercase SHA-256 digest")
+	if existing.get("thread_id") != thread_id:
+		raise ContractError("request state thread_id does not match its owner path")
+	unresolved_attempt = status == "declared" or (
+		status == "repair"
+		and (state_dir / "request-claims" / f"{existing_request_id}.json").exists()
+	)
+	if unresolved_attempt:
+		if existing_request_id == request_identifier:
+			return base_result(
+				"claimed",
+				changed=False,
+				request_id=request_identifier,
+				thread_id=thread_id,
+				repair="inspect exact request state before retry; no second gate was created",
+			)
+		raise ContractError("the owning task has an unresolved gate creation attempt")
 	if status not in {"gated", "delivered", "completed"}:
 		return None
-	if existing.get("request_id") == request_identifier:
+	if existing_request_id == request_identifier:
 		return base_result(
 			"already_gated",
 			changed=False,
@@ -390,7 +411,7 @@ def _submit_approval(args: argparse.Namespace) -> dict[str, Any]:
 
 	if path.exists():
 		existing_result = completed_or_active_request_result(
-			load_json(path), request_identifier, thread_id
+			state_dir, load_json(path), request_identifier, thread_id
 		)
 		if existing_result:
 			return existing_result
@@ -465,7 +486,7 @@ def _submit_approval(args: argparse.Namespace) -> dict[str, Any]:
 
 	if path.exists():
 		existing_result = completed_or_active_request_result(
-			load_json(path), request_identifier, thread_id
+			state_dir, load_json(path), request_identifier, thread_id
 		)
 		if existing_result:
 			return existing_result
@@ -609,7 +630,7 @@ def _submit_approval(args: argparse.Namespace) -> dict[str, Any]:
 		fail_created_verification("notes")
 	if not created_notes.startswith(notes):
 		fail_created_verification("notes")
-	if created_gate.get("isCompleted"):
+	if created_gate.get("isCompleted") is not False:
 		fail_created_verification("isCompleted")
 
 	mapping = {
