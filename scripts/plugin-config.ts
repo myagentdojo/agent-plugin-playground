@@ -444,10 +444,21 @@ export function hookDeclarationBody(client: "claude" | "codex"): Record<string, 
 	const pluginRoot = client === "claude" ? "CLAUDE_PLUGIN_ROOT" : "PLUGIN_ROOT"
 	const command = (event: "SessionStart" | "Stop") =>
 		`"\${${pluginRoot}}/hooks/native-capability-hook" ${event} ${client}`
+	const stopHooks: Array<Record<string, unknown>> = [
+		{ type: "command", command: command("Stop") },
+	]
+	if (client === "codex") {
+		stopHooks.push({
+			type: "command",
+			command: '"${PLUGIN_ROOT}/bin/agent-attention" hook-stop',
+			timeout: 10,
+			statusMessage: "Checking Agent Attention owner state",
+		})
+	}
 	return {
 		hooks: {
 			SessionStart: [{ hooks: [{ type: "command", command: command("SessionStart") }] }],
-			Stop: [{ hooks: [{ type: "command", command: command("Stop") }] }],
+			Stop: [{ hooks: stopHooks }],
 		},
 	}
 }

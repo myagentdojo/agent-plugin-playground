@@ -19,7 +19,9 @@ from pathlib import Path
 from typing import Any
 
 
-RUNTIME = Path(__file__).with_name("agent-attention.py")
+RUNTIME = Path(
+    os.environ.get("AGENT_ATTENTION_RUNTIME", Path(__file__).with_name("agent-attention.py"))
+)
 RUNTIME_SPEC = importlib.util.spec_from_file_location("agent_attention_runtime", RUNTIME)
 assert RUNTIME_SPEC and RUNTIME_SPEC.loader
 AGENT_ATTENTION = importlib.util.module_from_spec(RUNTIME_SPEC)

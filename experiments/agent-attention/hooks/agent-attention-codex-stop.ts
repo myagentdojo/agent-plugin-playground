@@ -2,67 +2,22 @@
 
 import { join } from 'node:path'
 
+import {
+	handleAgentAttentionStop as handleInstalledStop,
+	invalidAgentAttentionStopInput,
+	isAgentAttentionStopInput,
+	runAgentAttentionStop as runInstalledStop,
+	type AgentAttentionStopCheck,
+	type AgentAttentionStopInput,
+	type AgentAttentionStopOutput,
+	type AgentAttentionStopRuntime,
+} from '../../../packages/agent-attention/src/stop'
+
+export { isAgentAttentionStopInput }
+
 /** Experiment-local Codex hook command kept aligned with its fixture. */
 export const AGENT_ATTENTION_STOP_HOOK_COMMAND =
 	'bun "$(git rev-parse --show-toplevel)/experiments/agent-attention/hooks/agent-attention-codex-stop.ts"'
-
-/** Stable Stop fields used to correlate one exact task with owner state. */
-export interface AgentAttentionStopInput {
-	cwd: string
-	session_id: string
-	stop_hook_active?: boolean
-}
-
-/** Minimal owner result consumed by the hook adapter. */
-export interface AgentAttentionStopCheck {
-	hook_action: 'allow' | 'continue'
-	reason?: string
-}
-
-/** Injectable owner seam for public-hook tests. */
-export interface AgentAttentionStopRuntime {
-	checkStop: (threadId: string) => Promise<AgentAttentionStopCheck>
-}
-
-/** Codex Stop output that either permits stop or requests one continuation. */
-export type AgentAttentionStopOutput =
-	| { continue: true; suppressOutput: true }
-	| { decision: 'block'; reason: string }
-
-const INVALID_STOP_INPUT: AgentAttentionStopOutput = {
-	decision: 'block',
-	reason:
-		'Agent Attention could not correlate this Stop event to structured owner state. Repair the hook payload contract before stopping.',
-}
-
-/**
- * Validate only the stable task-correlation fields needed by the owner.
- *
- * @param value - Untrusted Codex hook payload
- * @returns True when the hook can correlate one exact task
- *
- * @example
- * ```ts
- * isAgentAttentionStopInput({ cwd: '/tmp/repo', session_id: crypto.randomUUID() })
- * ```
- */
-export function isAgentAttentionStopInput(
-	value: unknown,
-): value is AgentAttentionStopInput {
-	if (!value || typeof value !== 'object' || Array.isArray(value)) return false
-	const input = value as Record<string, unknown>
-	if (typeof input.cwd !== 'string' || input.cwd.trim() === '') return false
-	if (typeof input.session_id !== 'string' || input.session_id.trim() === '') {
-		return false
-	}
-	if (
-		input.stop_hook_active !== undefined &&
-		typeof input.stop_hook_active !== 'boolean'
-	) {
-		return false
-	}
-	return true
-}
 
 /**
  * Enforce explicit owner state without reading assistant prose or transcripts.
@@ -81,19 +36,7 @@ export async function handleAgentAttentionStop(
 	input: AgentAttentionStopInput,
 	runtime: AgentAttentionStopRuntime = createDefaultRuntime(),
 ): Promise<AgentAttentionStopOutput> {
-	if (input.stop_hook_active) {
-		return { continue: true, suppressOutput: true }
-	}
-	const check = await runtime.checkStop(input.session_id)
-	if (check.hook_action === 'continue') {
-		return {
-			decision: 'block',
-			reason:
-				check.reason ??
-				'Agent Attention owner state requires an actionable repair before stopping.',
-		}
-	}
-	return { continue: true, suppressOutput: true }
+	return handleInstalledStop(input, runtime)
 }
 
 /**
@@ -107,18 +50,7 @@ export async function runAgentAttentionStop(
 	input: unknown,
 	runtime: AgentAttentionStopRuntime = createDefaultRuntime(),
 ): Promise<AgentAttentionStopOutput> {
-	if (!isAgentAttentionStopInput(input)) {
-		return INVALID_STOP_INPUT
-	}
-	try {
-		return await handleAgentAttentionStop(input, runtime)
-	} catch (error) {
-		const detail = error instanceof Error ? error.message : 'unknown error'
-		return {
-			decision: 'block',
-			reason: `Agent Attention could not verify structured owner state. Repair the owner check before stopping: ${detail}`,
-		}
-	}
+	return runInstalledStop(input, runtime)
 }
 
 function createDefaultRuntime(): AgentAttentionStopRuntime {
@@ -161,6 +93,6 @@ if (import.meta.main) {
 		const output = await runAgentAttentionStop(parsed)
 		process.stdout.write(`${JSON.stringify(output)}\n`)
 	} catch {
-		process.stdout.write(`${JSON.stringify(INVALID_STOP_INPUT)}\n`)
+		process.stdout.write(`${JSON.stringify(invalidAgentAttentionStopInput())}\n`)
 	}
 }
