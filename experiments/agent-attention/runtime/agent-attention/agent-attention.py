@@ -825,10 +825,20 @@ def validate_delivery_receipt(
 	for field, value in expected.items():
 		if receipt.get(field) != value:
 			raise ContractError(f"delivery receipt does not match gate field: {field}")
+	validate_event_binding(receipt, identifier, document_name="delivery receipt")
 	parse_timezone_aware_timestamp(
 		receipt.get("delivered_at"), field_name="delivery receipt delivered_at"
 	)
 	return receipt
+
+
+def reminder_notes(value: Any) -> str:
+	"""Normalize absent reminder notes and reject schema drift."""
+	if value is None:
+		return ""
+	if not isinstance(value, str):
+		raise ContractError("reminder notes must be text")
+	return value
 
 
 def read_exact_completed_reminder(reminder_id: str, list_id: str) -> dict[str, Any]:
@@ -863,7 +873,9 @@ def validate_outcome_target(
 		raise ContractError("gate mapping list does not match configuration")
 	if reminder.get("title") != mapping.get("expected_title"):
 		raise ContractError("reminder title changed; refusing outcome update")
-	if mapping.get("required_notes_line") not in (reminder.get("notes") or "").splitlines():
+	if mapping.get("required_notes_line") not in reminder_notes(
+		reminder.get("notes")
+	).splitlines():
 		raise ContractError("approval meaning is absent from reminder notes")
 	if reminder.get("isCompleted") is not True or not reminder.get("completionDate"):
 		raise ContractError("outcome requires an already completed reminder")
@@ -940,7 +952,7 @@ def record_outcome(args: argparse.Namespace) -> dict[str, Any]:
 		if claim_created:
 			claim_path.unlink(missing_ok=True)
 		raise
-	current_notes = before.get("notes") or ""
+	current_notes = reminder_notes(before.get("notes"))
 	updated_notes = append_outcome_notes(current_notes, addition)
 	if contains_outcome_notes(current_notes, addition):
 		receipt = {
@@ -1071,7 +1083,9 @@ def poll(args: argparse.Namespace) -> dict[str, Any]:
 			repair = "reminder resolved outside the configured list"
 		elif reminder.get("title") != mapping.get("expected_title"):
 			repair = "reminder title changed; refusing semantic inference"
-		elif mapping.get("required_notes_line") not in (reminder.get("notes") or "").splitlines():
+		elif mapping.get("required_notes_line") not in reminder_notes(
+			reminder.get("notes")
+		).splitlines():
 			repair = "approval meaning is absent from reminder notes"
 		if repair:
 			repair = f"{repair}; reminder ID: {mapping.get('reminder_id')}"
@@ -1222,8 +1236,11 @@ def record_delivery(args: argparse.Namespace) -> dict[str, Any]:
 	claim_path = state_dir / "claims" / f"{identifier}.json"
 	receipt_path = state_dir / "receipts" / f"{identifier}.json"
 	if receipt_path.exists():
-		receipt = validate_event_binding(
-			load_json(receipt_path), identifier, document_name="delivery receipt"
+		receipt_candidate = require_json_object(
+			load_json(receipt_path), document_name="delivery receipt"
+		)
+		receipt = validate_delivery_receipt(
+			receipt_candidate, receipt_candidate, identifier
 		)
 		update_request_state(
 			state_dir,

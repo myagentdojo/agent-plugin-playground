@@ -1108,6 +1108,24 @@ else:
 		self.assertIn("already completed reminder", completed.stderr)
 		self.assertEqual([call[0] for call in self.calls()], ["show"])
 
+	def test_outcome_rejects_non_text_notes_and_releases_owned_claim(self) -> None:
+		self.target["notes"] = {"unexpected": "shape"}
+		self._write_inventory()
+		completed = self.run_cli(
+			"record-outcome",
+			"--reminder-id",
+			REMINDER_ID,
+			"--outcome",
+			"Must not record.",
+			"--finished-at",
+			FINISHED_AT,
+			"--execute",
+		)
+		self.assertEqual(completed.returncode, 1)
+		self.assertIn("reminder notes must be text", completed.stderr)
+		self.assertNotIn("Traceback", completed.stderr)
+		self.assertEqual(list((self.state_dir / "outcome-claims").glob("*.json")), [])
+
 	def test_poll_records_repair_for_one_broken_gate_and_delivers_the_next(self) -> None:
 		for path in (self.state_dir / "receipts").glob("*.json"):
 			path.unlink()
@@ -1249,6 +1267,41 @@ else:
 				)
 				self.assertEqual(completed.returncode, 1)
 				self.assertIn("does not confirm delivery", completed.stderr)
+
+	def test_record_delivery_rejects_incomplete_existing_receipt_before_reconciliation(self) -> None:
+		request_dir = self.state_dir / "requests"
+		request_dir.mkdir()
+		request_path = request_dir / f"{THREAD_ID}.json"
+		request_path.write_text(
+			json.dumps(
+				{
+					"version": 1,
+					"request_id": "existing-request",
+					"thread_id": THREAD_ID,
+					"reminder_id": REMINDER_ID,
+					"intent": {"continuation": "Resume exact work."},
+					"status": "gated",
+				}
+			),
+			encoding="utf-8",
+		)
+		receipt_path = next((self.state_dir / "receipts").glob("*.json"))
+		receipt = json.loads(receipt_path.read_text())
+		receipt.pop("delivered_at")
+		receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+		completed = self.run_cli(
+			"record-delivery",
+			"--event-id",
+			self._event_id(),
+			"--tool-result",
+			'{"delivered":true}',
+		)
+		self.assertEqual(completed.returncode, 1)
+		self.assertIn("delivery receipt delivered_at", completed.stderr)
+		self.assertNotIn("Traceback", completed.stderr)
+		request = json.loads(request_path.read_text())
+		self.assertEqual(request["status"], "gated")
+		self.assertNotIn("delivered_at", request)
 
 	def test_delivered_historical_gate_may_be_human_deleted_without_blocking_poll(self) -> None:
 		self.inventory_path.write_text(json.dumps([self.other]), encoding="utf-8")
