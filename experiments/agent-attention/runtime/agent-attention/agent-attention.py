@@ -1241,8 +1241,8 @@ def parser() -> argparse.ArgumentParser:
 
 def main() -> int:
 	"""Dispatch one command and emit one JSON result."""
-	args = parser().parse_args()
 	try:
+		args = parser().parse_args()
 		result = args.handler(args)
 	except (ContractError, json.JSONDecodeError, OSError, subprocess.SubprocessError) as error:
 		print(str(error), file=sys.stderr)

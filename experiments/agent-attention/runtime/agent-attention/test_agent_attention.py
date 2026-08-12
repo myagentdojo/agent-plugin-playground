@@ -283,6 +283,17 @@ else:
 		for term in ("yes_no", "paused", "Approve", "one alert"):
 			self.assertIn(term, submit_help)
 
+	def test_parser_construction_errors_use_the_structured_error_boundary(self) -> None:
+		completed = self.run_cli(
+			"commands", env_update={"XDG_STATE_HOME": "relative-state"}
+		)
+		self.assertEqual(completed.returncode, 1)
+		self.assertIn("XDG_STATE_HOME must be an absolute path", completed.stderr)
+		self.assertNotIn("Traceback", completed.stderr)
+		result = json.loads(completed.stdout)
+		self.assertEqual(result["status"], "error")
+		self.assertEqual(result["error_category"], "contract_or_runtime")
+
 	def test_outcome_preview_is_read_only_and_exact(self) -> None:
 		result = self.result(
 			self.run_cli(
