@@ -32,6 +32,7 @@ REMINDER_ID = "11111111-1111-4111-8111-111111111111"
 OTHER_REMINDER_ID = "22222222-2222-4222-8222-222222222222"
 NEW_REMINDER_ID = "33333333-3333-4333-8333-333333333333"
 THREAD_ID = "019fc54e-ff95-7ca1-af49-5720c36fdc0d"
+OTHER_THREAD_ID = "019fc54e-ff95-7ca1-af49-5720c36fdc0e"
 APPROVAL_MEANING = "Approve the bounded outcome-receipt test only."
 FINISHED_AT = "2026-08-10T05:45:00Z"
 
@@ -1245,7 +1246,7 @@ else:
 				"--event-id",
 				result["event_id"],
 				"--tool-result",
-				'{"delivered":true,"fixture":"exact-task"}',
+				json.dumps({"threadId": THREAD_ID}),
 			)
 		)
 		self.assertEqual(recorded["status"], "recorded")
@@ -1575,7 +1576,41 @@ else:
 		self.assertEqual(ready["status"], "ready")
 		self.assertTrue(ready["link_handler"]["installed"])
 
-	def test_record_delivery_rejects_invalid_event_ids_and_non_boolean_proof(self) -> None:
+	def test_record_delivery_accepts_codex_exact_task_result(self) -> None:
+		claim_dir = self.state_dir / "claims"
+		claim_dir.mkdir()
+		identifier = self._event_id()
+		receipt_path = self.state_dir / "receipts" / f"{identifier}.json"
+		receipt_path.unlink()
+		(claim_dir / f"{identifier}.json").write_text(
+			json.dumps(
+				{
+					"event_id": identifier,
+					"reminder_id": REMINDER_ID,
+					"thread_id": THREAD_ID,
+					"approval_meaning": APPROVAL_MEANING,
+				}
+			),
+			encoding="utf-8",
+		)
+
+		result = self.result(
+			self.run_cli(
+				"record-delivery",
+				"--event-id",
+				identifier,
+				"--tool-result",
+				json.dumps({"threadId": THREAD_ID}),
+			)
+		)
+
+		self.assertEqual(result["status"], "recorded")
+		self.assertEqual(
+			json.loads(receipt_path.read_text())["tool_result"],
+			{"threadId": THREAD_ID},
+		)
+
+	def test_record_delivery_rejects_invalid_event_ids_and_unbound_proof(self) -> None:
 		for invalid_id in ("../requests/forged", "A" * 64, "0" * 63):
 			with self.subTest(event_id=invalid_id):
 				completed = self.run_cli(
@@ -1603,7 +1638,12 @@ else:
 			),
 			encoding="utf-8",
 		)
-		for tool_result in ('{"delivered":"false"}', '{"delivered":1}', '[]'):
+		for tool_result in (
+			'{"delivered":true}',
+			json.dumps({"threadId": OTHER_THREAD_ID}),
+			json.dumps({"thread_id": THREAD_ID}),
+			'[]',
+		):
 			with self.subTest(tool_result=tool_result):
 				completed = self.run_cli(
 					"record-delivery",
@@ -1613,7 +1653,7 @@ else:
 					tool_result,
 				)
 				self.assertEqual(completed.returncode, 1)
-				self.assertIn("does not confirm delivery", completed.stderr)
+				self.assertIn("does not confirm exact task delivery", completed.stderr)
 
 	def test_record_delivery_rejects_incomplete_existing_receipt_before_reconciliation(self) -> None:
 		request_dir = self.state_dir / "requests"

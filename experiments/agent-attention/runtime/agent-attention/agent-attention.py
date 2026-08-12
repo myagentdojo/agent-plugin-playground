@@ -1405,16 +1405,18 @@ def record_delivery(args: argparse.Namespace) -> dict[str, Any]:
 		return base_result("already_delivered", changed=False, event_id=identifier)
 	if not claim_path.exists():
 		raise ContractError("cannot record delivery without an existing claim")
+	claim = validate_event_binding(
+		load_json(claim_path), identifier, document_name="delivery claim"
+	)
 	try:
 		tool_result = json.loads(args.tool_result)
 	except json.JSONDecodeError as error:
 		raise ContractError("tool result must be valid JSON") from error
-	if not isinstance(tool_result, dict) or tool_result.get("delivered") is not True:
-		raise ContractError("tool result does not confirm delivery")
-
-	claim = validate_event_binding(
-		load_json(claim_path), identifier, document_name="delivery claim"
-	)
+	if (
+		not isinstance(tool_result, dict)
+		or tool_result.get("threadId") != claim["thread_id"]
+	):
+		raise ContractError("tool result does not confirm exact task delivery")
 	receipt = {
 		**claim,
 		"delivered_at": datetime.now(timezone.utc).isoformat(),
