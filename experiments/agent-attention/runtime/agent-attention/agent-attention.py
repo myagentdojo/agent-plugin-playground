@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
 import json
 import math
@@ -101,6 +102,55 @@ def write_json(path: Path, value: Any, *, exclusive: bool = False) -> bool:
 	finally:
 		temporary.unlink(missing_ok=True)
 	return True
+
+
+def acquire_request_lock(path: Path, value: dict[str, Any]) -> int | None:
+	"""Acquire one crash-recoverable process-owned request lock."""
+	path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+	flags = os.O_RDWR | os.O_CREAT
+	if hasattr(os, "O_NOFOLLOW"):
+		flags |= os.O_NOFOLLOW
+	descriptor = os.open(path, flags, 0o600)
+	try:
+		fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+	except BlockingIOError:
+		os.close(descriptor)
+		return None
+	try:
+		encoded = (json.dumps(value, sort_keys=True) + "\n").encode()
+		os.fchmod(descriptor, 0o600)
+		os.ftruncate(descriptor, 0)
+		os.lseek(descriptor, 0, os.SEEK_SET)
+		remaining = memoryview(encoded)
+		while remaining:
+			written = os.write(descriptor, remaining)
+			if written <= 0:
+				raise OSError("request lock metadata write made no progress")
+			remaining = remaining[written:]
+		os.fsync(descriptor)
+	except BaseException:
+		fcntl.flock(descriptor, fcntl.LOCK_UN)
+		os.close(descriptor)
+		raise
+	return descriptor
+
+
+def release_request_lock(path: Path, descriptor: int) -> None:
+	"""Remove only the path still backed by the held request lock."""
+	try:
+		try:
+			path_stat = os.stat(path, follow_symlinks=False)
+		except FileNotFoundError:
+			path_stat = None
+		descriptor_stat = os.fstat(descriptor)
+		if path_stat and (
+			path_stat.st_dev == descriptor_stat.st_dev
+			and path_stat.st_ino == descriptor_stat.st_ino
+		):
+			path.unlink()
+	finally:
+		fcntl.flock(descriptor, fcntl.LOCK_UN)
+		os.close(descriptor)
 
 
 def append_audit(path: Path, value: Any) -> None:
@@ -378,15 +428,15 @@ def _submit_approval(args: argparse.Namespace) -> dict[str, Any]:
 		)
 
 	request_lock_path = state_dir / "request-locks" / f"{thread_id}.json"
-	if not write_json(
+	request_lock_descriptor = acquire_request_lock(
 		request_lock_path,
 		{
 			"request_id": request_identifier,
 			"thread_id": thread_id,
 			"locked_at": datetime.now(timezone.utc).isoformat(),
 		},
-		exclusive=True,
-	):
+	)
+	if request_lock_descriptor is None:
 		return base_result(
 			"claimed",
 			changed=False,
@@ -394,7 +444,10 @@ def _submit_approval(args: argparse.Namespace) -> dict[str, Any]:
 			thread_id=thread_id,
 			repair="inspect exact request state before retry; no second gate was created",
 		)
-	args._agent_attention_request_lock_path = request_lock_path
+	args._agent_attention_request_lock = (
+		request_lock_path,
+		request_lock_descriptor,
+	)
 
 	if path.exists():
 		existing_result = completed_or_active_request_result(
@@ -592,9 +645,14 @@ def submit_approval(args: argparse.Namespace) -> dict[str, Any]:
 	try:
 		return _submit_approval(args)
 	finally:
-		lock_path = getattr(args, "_agent_attention_request_lock_path", None)
-		if isinstance(lock_path, Path):
-			lock_path.unlink(missing_ok=True)
+		request_lock = getattr(args, "_agent_attention_request_lock", None)
+		if (
+			isinstance(request_lock, tuple)
+			and len(request_lock) == 2
+			and isinstance(request_lock[0], Path)
+			and isinstance(request_lock[1], int)
+		):
+			release_request_lock(request_lock[0], request_lock[1])
 
 
 def read_inventory(
@@ -1295,7 +1353,22 @@ def doctor(args: argparse.Namespace) -> dict[str, Any]:
 			):
 				raise ContractError("link handler Info.plist URL schemes are malformed")
 			schemes.extend(item_schemes)
-		handler["installed"] = "agent-attention" in schemes
+		executable_name = info.get("CFBundleExecutable")
+		if (
+			not isinstance(executable_name, str)
+			or not executable_name
+			or executable_name in {".", ".."}
+			or "/" in executable_name
+			or "\\" in executable_name
+		):
+			raise ContractError("link handler Info.plist executable is malformed")
+		executable_path = handler_path / "Contents" / "MacOS" / executable_name
+		executable_ready = (
+			executable_path.is_file()
+			and not executable_path.is_symlink()
+			and os.access(executable_path, os.X_OK)
+		)
+		handler["installed"] = "agent-attention" in schemes and executable_ready
 
 	ready = authorized and config_status["configured"] and handler["installed"]
 	return base_result(

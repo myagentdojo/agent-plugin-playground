@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import importlib.util
 import json
 import os
@@ -787,16 +788,32 @@ else:
 	def test_existing_submit_claim_suppresses_a_concurrent_gate_and_alert(self) -> None:
 		claim_dir = self.state_dir / "request-locks"
 		claim_dir.mkdir()
-		(claim_dir / f"{THREAD_ID}.json").write_text(
+		lock_path = claim_dir / f"{THREAD_ID}.json"
+		lock_path.write_text(
 			json.dumps({"thread_id": THREAD_ID, "request_id": "winner"}),
 			encoding="utf-8",
 		)
-		result = self.result(
-			self.run_cli(*self.submit_arguments(), "--execute")
-		)
+		with lock_path.open("r+") as lock_handle:
+			fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+			result = self.result(
+				self.run_cli(*self.submit_arguments(), "--execute")
+			)
 		self.assertEqual(result["status"], "claimed")
 		self.assertFalse(result["changed"])
 		self.assertEqual(self.calls(), [])
+
+	def test_submit_recovers_request_lock_abandoned_before_creation(self) -> None:
+		claim_dir = self.state_dir / "request-locks"
+		claim_dir.mkdir()
+		lock_path = claim_dir / f"{THREAD_ID}.json"
+		lock_path.write_text(
+			json.dumps({"thread_id": THREAD_ID, "request_id": "abandoned"}),
+			encoding="utf-8",
+		)
+		result = self.result(self.run_cli(*self.submit_arguments(), "--execute"))
+		self.assertEqual(result["status"], "gated")
+		self.assertFalse(lock_path.exists())
+		self.assertEqual(len([call for call in self.calls() if call[0] == "add"]), 1)
 
 	def test_failed_submit_releases_the_per_thread_request_lock(self) -> None:
 		completed = self.run_cli(
@@ -1088,6 +1105,40 @@ else:
 		self.assertIn("Info.plist URL types are malformed", completed.stderr)
 		self.assertNotIn("Traceback", completed.stderr)
 		self.assertEqual(json.loads(completed.stdout)["status"], "error")
+
+	def test_doctor_requires_the_plist_selected_executable_for_readiness(self) -> None:
+		home = self.root / "home"
+		handler_path = home / "Applications" / "Agent Attention Link.app"
+		info_path = handler_path / "Contents" / "Info.plist"
+		info_path.parent.mkdir(parents=True)
+		with info_path.open("wb") as handle:
+			plistlib.dump(
+				{
+					"CFBundleExecutable": "AgentAttentionLink",
+					"CFBundleURLTypes": [
+						{"CFBundleURLSchemes": ["agent-attention"]}
+					],
+				},
+				handle,
+			)
+		missing = self.result(self.run_cli("doctor", env_update={"HOME": str(home)}))
+		self.assertEqual(missing["status"], "repair_needed")
+		self.assertFalse(missing["link_handler"]["installed"])
+
+		executable = handler_path / "Contents" / "MacOS" / "AgentAttentionLink"
+		executable.parent.mkdir()
+		executable.write_text("#!/bin/sh\n", encoding="utf-8")
+		executable.chmod(0o644)
+		non_executable = self.result(
+			self.run_cli("doctor", env_update={"HOME": str(home)})
+		)
+		self.assertEqual(non_executable["status"], "repair_needed")
+		self.assertFalse(non_executable["link_handler"]["installed"])
+
+		executable.chmod(0o755)
+		ready = self.result(self.run_cli("doctor", env_update={"HOME": str(home)}))
+		self.assertEqual(ready["status"], "ready")
+		self.assertTrue(ready["link_handler"]["installed"])
 
 	def test_record_delivery_rejects_invalid_event_ids_and_non_boolean_proof(self) -> None:
 		for invalid_id in ("../requests/forged", "A" * 64, "0" * 63):
