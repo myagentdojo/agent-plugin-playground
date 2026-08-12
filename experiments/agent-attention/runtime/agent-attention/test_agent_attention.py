@@ -145,6 +145,8 @@ elif args[0] == "add":
         "isCompleted": False,
         "lastModifiedDate": datetime.now(timezone.utc).isoformat(),
     }
+    if os.environ.get("FAKE_REMINDERS_NEW_NOTES_JSON"):
+        reminder["notes"] = json.loads(os.environ["FAKE_REMINDERS_NEW_NOTES_JSON"])
     inventory.append(reminder)
     inventory_path.write_text(json.dumps(inventory), encoding="utf-8")
     print(json.dumps(reminder))
@@ -344,6 +346,30 @@ else:
 		completed = self.run_cli("poll")
 		self.assertEqual(completed.returncode, 1)
 		self.assertIn("inventory entries must be JSON objects", completed.stderr)
+		self.assertNotIn("Traceback", completed.stderr)
+
+	def test_poll_rejects_non_text_and_duplicate_inventory_ids(self) -> None:
+		for invalid_id, expected in (
+			([], "must be nonempty text"),
+			({}, "must be nonempty text"),
+		):
+			with self.subTest(invalid_id=invalid_id):
+				self.inventory_path.write_text(
+					json.dumps([self.target, {**self.other, "id": invalid_id}]),
+					encoding="utf-8",
+				)
+				completed = self.run_cli("poll")
+				self.assertEqual(completed.returncode, 1)
+				self.assertIn(expected, completed.stderr)
+				self.assertNotIn("Traceback", completed.stderr)
+
+		self.inventory_path.write_text(
+			json.dumps([self.target, {**self.other, "id": REMINDER_ID}]),
+			encoding="utf-8",
+		)
+		completed = self.run_cli("poll")
+		self.assertEqual(completed.returncode, 1)
+		self.assertIn("reminder IDs must be unique", completed.stderr)
 		self.assertNotIn("Traceback", completed.stderr)
 
 	def test_outcome_preview_is_read_only_and_exact(self) -> None:
@@ -860,6 +886,21 @@ else:
 			(self.state_dir / "requests" / f"{THREAD_ID}.json").read_text()
 		)
 		self.assertEqual(request["status"], "repair")
+
+	def test_submit_rejects_non_text_created_notes_without_traceback(self) -> None:
+		completed = self.run_cli(
+			*self.submit_arguments(),
+			"--execute",
+			env_update={"FAKE_REMINDERS_NEW_NOTES_JSON": '{"unexpected": true}'},
+		)
+		self.assertEqual(completed.returncode, 1)
+		self.assertIn("created reminder failed exact verification: notes", completed.stderr)
+		self.assertNotIn("Traceback", completed.stderr)
+		request = json.loads(
+			(self.state_dir / "requests" / f"{THREAD_ID}.json").read_text()
+		)
+		self.assertEqual(request["status"], "repair")
+		self.assertEqual(len([call for call in self.calls() if call[0] == "add"]), 1)
 
 	def test_submit_rejects_non_object_request_state_without_traceback(self) -> None:
 		request_dir = self.state_dir / "requests"

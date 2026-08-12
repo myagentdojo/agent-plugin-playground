@@ -16,7 +16,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 
 COMMAND_CATALOG = (
@@ -75,6 +75,20 @@ def require_json_object_array(value: Any, *, document_name: str) -> list[dict[st
 	if any(not isinstance(item, dict) for item in value):
 		raise ContractError(f"{document_name} entries must be JSON objects")
 	return value
+
+
+def require_reminder_inventory(value: Any, *, document_name: str) -> list[dict[str, Any]]:
+	"""Require reminder objects with unique nonempty text IDs."""
+	inventory = require_json_object_array(value, document_name=document_name)
+	seen_ids: set[str] = set()
+	for item in inventory:
+		reminder_id = require_nonempty_text(
+			item.get("id"), field_name=f"{document_name} reminder ID"
+		)
+		if reminder_id in seen_ids:
+			raise ContractError(f"{document_name} reminder IDs must be unique")
+		seen_ids.add(reminder_id)
+	return inventory
 
 
 def write_json(path: Path, value: Any, *, exclusive: bool = False) -> bool:
@@ -567,7 +581,7 @@ def _submit_approval(args: argparse.Namespace) -> dict[str, Any]:
 		)
 		raise ContractError("created stable reminder ID did not resolve exactly once")
 	created_gate = created_matches[0]
-	def fail_created_verification(field: str) -> None:
+	def fail_created_verification(field: str) -> NoReturn:
 		message = f"created reminder failed exact verification: {field}"
 		write_json(
 			path,
@@ -589,7 +603,11 @@ def _submit_approval(args: argparse.Namespace) -> dict[str, Any]:
 	):
 		if created_gate.get(field) != expected:
 			fail_created_verification(field)
-	if not (created_gate.get("notes") or "").startswith(notes):
+	try:
+		created_notes = reminder_notes(created_gate.get("notes"))
+	except ContractError:
+		fail_created_verification("notes")
+	if not created_notes.startswith(notes):
 		fail_created_verification("notes")
 	if created_gate.get("isCompleted"):
 		fail_created_verification("isCompleted")
@@ -671,7 +689,7 @@ def read_inventory(
 		],
 		timeout_seconds=timeout_seconds,
 	)
-	return require_json_object_array(inventory, document_name="remindctl inventory")
+	return require_reminder_inventory(inventory, document_name="remindctl inventory")
 
 
 def event_id(mapping: dict[str, Any]) -> str:
@@ -854,7 +872,7 @@ def read_exact_completed_reminder(reminder_id: str, list_id: str) -> dict[str, A
 			"--no-input",
 		]
 	)
-	inventory = require_json_object_array(
+	inventory = require_reminder_inventory(
 		inventory, document_name="completed reminder inventory"
 	)
 	matches = [item for item in inventory if item.get("id") == reminder_id]
@@ -1055,7 +1073,7 @@ def poll(args: argparse.Namespace) -> dict[str, Any]:
 		config,
 		timeout_seconds=getattr(args, "command_timeout_seconds", None),
 	)
-	items_by_id = {item.get("id"): item for item in inventory}
+	items_by_id = {item["id"]: item for item in inventory}
 
 	for mapping_path in mapping_paths:
 		mapping = validate_gate_mapping(
