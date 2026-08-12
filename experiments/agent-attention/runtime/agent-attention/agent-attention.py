@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import plistlib
 import subprocess
@@ -1082,9 +1083,17 @@ def poll(args: argparse.Namespace) -> dict[str, Any]:
 
 def watch(args: argparse.Namespace) -> dict[str, Any]:
 	"""Wait in the foreground for one bounded completion detection window."""
-	if args.interval_seconds <= 0 or args.interval_seconds > 15:
+	if (
+		not math.isfinite(args.interval_seconds)
+		or args.interval_seconds <= 0
+		or args.interval_seconds > 15
+	):
 		raise ContractError("interval-seconds must be greater than zero and at most 15")
-	if args.timeout_seconds <= 0 or args.timeout_seconds > 3600:
+	if (
+		not math.isfinite(args.timeout_seconds)
+		or args.timeout_seconds <= 0
+		or args.timeout_seconds > 3600
+	):
 		raise ContractError("timeout-seconds must be greater than zero and at most 3600")
 	started = time.monotonic()
 	deadline = started + args.timeout_seconds

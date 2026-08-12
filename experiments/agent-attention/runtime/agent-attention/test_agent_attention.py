@@ -963,6 +963,23 @@ else:
 		self.assertLess(time.monotonic() - started, 1.9)
 		self.assertIn("bounded execution window", completed.stderr)
 
+	def test_watch_rejects_non_finite_durations_without_traceback(self) -> None:
+		for flag, value, expected_error in (
+			("--interval-seconds", "nan", "interval-seconds"),
+			("--interval-seconds", "inf", "interval-seconds"),
+			("--timeout-seconds", "nan", "timeout-seconds"),
+			("--timeout-seconds", "inf", "timeout-seconds"),
+		):
+			with self.subTest(flag=flag, value=value):
+				started = time.monotonic()
+				completed = self.run_cli("watch", flag, value)
+				self.assertEqual(completed.returncode, 1)
+				self.assertLess(time.monotonic() - started, 1)
+				self.assertIn(expected_error, completed.stderr)
+				self.assertNotIn("Traceback", completed.stderr)
+				self.assertEqual(json.loads(completed.stdout)["status"], "error")
+				self.assertEqual(self.calls(), [])
+
 	def test_poll_repairs_invalid_completion_timestamp_before_claiming(self) -> None:
 		for path in (self.state_dir / "receipts").glob("*.json"):
 			path.unlink()
