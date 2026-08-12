@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/myagentdojo/agent-plugin-playground/compare/v0.1.0...v0.1.1) (2026-08-12)
+
+
+### Bug Fixes
+
+* bind Agent Attention delivery to Codex task ([#5](https://github.com/myagentdojo/agent-plugin-playground/issues/5)) ([4e9b3a5](https://github.com/myagentdojo/agent-plugin-playground/commit/4e9b3a51e4bbed77c4a36a04a8a657790ffa3c52))
+
 ## 0.1.0 (2026-08-12)
 
 
