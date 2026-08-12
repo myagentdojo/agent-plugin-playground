@@ -894,6 +894,17 @@ else:
 		self.assertEqual(result["status"], "gated")
 		self.assertEqual(len([call for call in self.calls() if call[0] == "add"]), 1)
 
+	def test_submit_reclaims_truncated_pre_declaration_claim(self) -> None:
+		arguments = self.submit_arguments()
+		preview = self.result(self.run_cli(*arguments))
+		claim_dir = self.state_dir / "request-claims"
+		claim_dir.mkdir()
+		(claim_dir / f"{preview['request_id']}.json").write_text("{", encoding="utf-8")
+
+		result = self.result(self.run_cli(*arguments, "--execute"))
+		self.assertEqual(result["status"], "gated")
+		self.assertEqual(len([call for call in self.calls() if call[0] == "add"]), 1)
+
 	def test_submit_reconciles_mapping_published_before_request_update(self) -> None:
 		arguments = self.submit_arguments()
 		first = self.result(self.run_cli(*arguments, "--execute"))

@@ -557,14 +557,8 @@ def _submit_approval(args: argparse.Namespace) -> dict[str, Any]:
 
 	request_claim_path = state_dir / "request-claims" / f"{request_identifier}.json"
 	if request_claim_path.exists() and not path.exists():
-		abandoned_claim = require_json_object(
-			load_json(request_claim_path), document_name="request claim"
-		)
-		if (
-			abandoned_claim.get("request_id") != request_identifier
-			or abandoned_claim.get("thread_id") != thread_id
-		):
-			raise ContractError("request claim does not match its exact owner")
+		# Owner state is published before creation starts. Under the held per-thread
+		# lock, an absent owner proves even a truncated claim is safe to reclaim.
 		request_claim_path.unlink()
 	if not write_json(
 		request_claim_path,
