@@ -447,6 +447,19 @@ def _submit_approval(args: argparse.Namespace) -> dict[str, Any]:
 			},
 		)
 		raise ContractError("created reminder response lacks a stable ID; inspect before retry")
+	try:
+		reminder_id = validate_reminder_id(reminder_id)
+	except ContractError as error:
+		write_json(
+			path,
+			{
+				**declared,
+				"status": "repair",
+				"repair": f"created reminder returned an invalid stable ID: {error}",
+				"updated_at": datetime.now(timezone.utc).isoformat(),
+			},
+		)
+		raise
 	created_inventory = read_inventory(config)
 	created_matches = [item for item in created_inventory if item.get("id") == reminder_id]
 	if len(created_matches) != 1:
@@ -584,10 +597,11 @@ def validate_event_id(value: str) -> str:
 	return value
 
 
-def validate_reminder_id(value: str) -> str:
+def validate_reminder_id(value: Any) -> str:
 	"""Reject path syntax while preserving one opaque stable reminder ID."""
 	if (
-		not value
+		not isinstance(value, str)
+		or not value
 		or value in {".", ".."}
 		or "/" in value
 		or "\\" in value

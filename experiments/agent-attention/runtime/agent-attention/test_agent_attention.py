@@ -659,6 +659,24 @@ else:
 			(self.state_dir / "request-locks" / f"{THREAD_ID}.json").exists()
 		)
 
+	def test_submit_rejects_path_like_created_reminder_id_before_mapping_write(self) -> None:
+		completed = self.run_cli(
+			*self.submit_arguments(),
+			"--execute",
+			env_update={"FAKE_REMINDERS_NEW_ID": "../unexpected"},
+		)
+		self.assertEqual(completed.returncode, 1)
+		self.assertIn("reminder ID must be one opaque path segment", completed.stderr)
+		self.assertFalse((self.state_dir / "unexpected.json").exists())
+		self.assertEqual(
+			[path.name for path in (self.state_dir / "gates").glob("*.json")],
+			[f"{REMINDER_ID}.json"],
+		)
+		request = json.loads(
+			(self.state_dir / "requests" / f"{THREAD_ID}.json").read_text()
+		)
+		self.assertEqual(request["status"], "repair")
+
 	def test_stop_check_continues_declared_or_delivered_state_without_reading_prose(self) -> None:
 		request_dir = self.state_dir / "requests"
 		request_dir.mkdir()
