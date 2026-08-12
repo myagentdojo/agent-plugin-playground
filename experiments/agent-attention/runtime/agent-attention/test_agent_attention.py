@@ -776,6 +776,23 @@ else:
 			(self.state_dir / "request-locks" / f"{THREAD_ID}.json").exists()
 		)
 
+	def test_submit_releases_owned_claim_when_remindctl_never_starts(self) -> None:
+		missing_bin = self.root / "missing-bin"
+		missing_bin.mkdir()
+		arguments = (*self.submit_arguments(), "--execute")
+		failed = self.run_cli(*arguments, env_update={"PATH": str(missing_bin)})
+		self.assertEqual(failed.returncode, 1)
+		self.assertIn("No such file or directory", failed.stderr)
+		self.assertEqual(list((self.state_dir / "request-claims").glob("*.json")), [])
+		request = json.loads(
+			(self.state_dir / "requests" / f"{THREAD_ID}.json").read_text()
+		)
+		self.assertEqual(request["status"], "repair")
+
+		retried = self.result(self.run_cli(*arguments))
+		self.assertEqual(retried["status"], "gated")
+		self.assertEqual(len([call for call in self.calls() if call[0] == "add"]), 1)
+
 	def test_submit_rejects_path_like_created_reminder_id_before_mapping_write(self) -> None:
 		completed = self.run_cli(
 			*self.submit_arguments(),

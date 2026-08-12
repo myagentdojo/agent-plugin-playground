@@ -450,6 +450,18 @@ def _submit_approval(args: argparse.Namespace) -> dict[str, Any]:
 				"--no-input",
 			]
 		)
+	except OSError as error:
+		request_claim_path.unlink(missing_ok=True)
+		write_json(
+			path,
+			{
+				**declared,
+				"status": "repair",
+				"repair": f"gate creation did not start; repair remindctl before retry: {error}",
+				"updated_at": datetime.now(timezone.utc).isoformat(),
+			},
+		)
+		raise
 	except ContractError as error:
 		write_json(
 			path,
