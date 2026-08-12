@@ -126,6 +126,8 @@ def read_config(state_dir: Path) -> dict[str, Any]:
 			"not configured; run configure with the exact Agent Attention list ID"
 		)
 	config = load_json(path)
+	if not isinstance(config, dict):
+		raise ContractError("config must be a JSON object")
 	if config.get("version") != 1:
 		raise ContractError("unsupported config version")
 	list_config = config.get("list")

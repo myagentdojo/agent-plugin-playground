@@ -294,6 +294,16 @@ else:
 		self.assertEqual(result["status"], "error")
 		self.assertEqual(result["error_category"], "contract_or_runtime")
 
+	def test_non_object_config_uses_the_structured_error_boundary(self) -> None:
+		(self.state_dir / "config.json").write_text("[]", encoding="utf-8")
+		completed = self.run_cli("doctor")
+		self.assertEqual(completed.returncode, 1)
+		self.assertIn("config must be a JSON object", completed.stderr)
+		self.assertNotIn("Traceback", completed.stderr)
+		result = json.loads(completed.stdout)
+		self.assertEqual(result["status"], "error")
+		self.assertEqual(result["error_category"], "contract_or_runtime")
+
 	def test_outcome_preview_is_read_only_and_exact(self) -> None:
 		result = self.result(
 			self.run_cli(
