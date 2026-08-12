@@ -10,6 +10,7 @@
   "scripts": {
     "test": "bun test",
     "test:agent-attention": "python3 -m unittest experiments/agent-attention/runtime/agent-attention/test_agent_attention.py && bun test experiments/agent-attention/hooks/agent-attention-codex-stop.test.ts",
+    "update": "bun run scripts/update.ts",
     "init": "bun run scripts/init.ts",
     "generate": "bun run scripts/generate.ts",
     "generate:check": "bun run scripts/generate.ts --check",
