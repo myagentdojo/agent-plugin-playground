@@ -1,11 +1,11 @@
 {
-  "name": "harness-native-plugin-prototype",
-  "version": "0.3.0",
-  "description": "Portable Bun skills and a guided native capability tour for Claude Code and Codex",
+  "name": "agent-plugin-playground",
+  "version": "0.1.0",
+  "description": "Bun-powered native plugin playground for one active experiment at a time",
   "author": {
-    "name": "Prototype"
+    "name": "My Agent Dojo"
   },
-  "repository": "https://github.com/myagentdojo/agent-plugin-template",
+  "repository": "https://github.com/myagentdojo/agent-plugin-playground",
   "license": "MIT",
   "keywords": [
     "agent-plugin",
@@ -14,10 +14,10 @@
   "skills": "./skills/",
   "hooks": "./hooks/codex/hooks.json",
   "interface": {
-    "displayName": "Harness Plugin Prototype",
-    "shortDescription": "Tour native plugin features",
-    "longDescription": "Run a guided capability tour across Claude Code and Codex, inspect native lifecycle declarations, and keep using dependency-closed skills through one verified, plugin-managed Bun runtime.",
-    "developerName": "Prototype",
+    "displayName": "Agent Plugin Playground",
+    "shortDescription": "One active plugin experiment",
+    "longDescription": "Use a private playground to inspect native plugin declarations, run the capability tour, and prepare one experiment without claiming release qualification.",
+    "developerName": "My Agent Dojo",
     "category": "Developer Tools",
     "capabilities": [
       "Execute verified Bun code",

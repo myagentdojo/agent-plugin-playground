@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun \"$(git rev-parse --show-toplevel)/experiments/agent-attention/hooks/agent-attention-codex-stop.ts\"",
+            "timeout": 10,
+            "statusMessage": "Checking Agent Attention owner state"
+          }
+        ]
+      }
+    ]
+  }
+}

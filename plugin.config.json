@@ -1,21 +1,21 @@
 {
-  "template": true,
-  "name": "harness-native-plugin-prototype",
-  "displayName": "Harness Plugin Prototype",
-  "version": "0.3.0",
-  "description": "Portable Bun skills and a guided native capability tour for Claude Code and Codex",
+  "template": false,
+  "name": "agent-plugin-playground",
+  "displayName": "Agent Plugin Playground",
+  "version": "0.1.0",
+  "description": "Bun-powered native plugin playground for one active experiment at a time",
   "author": {
-    "name": "Prototype"
+    "name": "My Agent Dojo"
   },
-  "repository": "https://github.com/myagentdojo/agent-plugin-template",
+  "repository": "https://github.com/myagentdojo/agent-plugin-playground",
   "license": "MIT",
   "keywords": [
     "agent-plugin",
     "bun"
   ],
   "category": "Developer Tools",
-  "shortDescription": "Tour native plugin features",
-  "longDescription": "Run a guided capability tour across Claude Code and Codex, inspect native lifecycle declarations, and keep using dependency-closed skills through one verified, plugin-managed Bun runtime.",
+  "shortDescription": "One active plugin experiment",
+  "longDescription": "Use a private playground to inspect native plugin declarations, run the capability tour, and prepare one experiment without claiming release qualification.",
   "capabilities": [
     "Execute verified Bun code",
     "Download Bun after approval",
@@ -34,7 +34,7 @@
   "canary": {
     "owner": "myagentdojo",
     "actor": "myagentdojo",
-    "publicRepository": "agent-plugin-template-canary-public",
-    "privateRepository": "agent-plugin-template-canary-private"
+    "publicRepository": "agent-plugin-playground-public-canary",
+    "privateRepository": "agent-plugin-playground-private-canary"
   }
 }

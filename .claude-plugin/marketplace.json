@@ -1,19 +1,19 @@
 {
-  "name": "harness-native-plugin-prototype",
+  "name": "agent-plugin-playground",
   "owner": {
-    "name": "Prototype"
+    "name": "My Agent Dojo"
   },
   "metadata": {
-    "description": "Marketplace for Harness Plugin Prototype",
-    "version": "0.3.0"
+    "description": "Marketplace for Agent Plugin Playground",
+    "version": "0.1.0"
   },
   "plugins": [
     {
-      "name": "harness-native-plugin-prototype",
-      "displayName": "Harness Plugin Prototype",
-      "description": "Portable Bun skills and a guided native capability tour for Claude Code and Codex",
+      "name": "agent-plugin-playground",
+      "displayName": "Agent Plugin Playground",
+      "description": "Bun-powered native plugin playground for one active experiment at a time",
       "author": {
-        "name": "Prototype"
+        "name": "My Agent Dojo"
       },
       "source": "./plugin",
       "defaultEnabled": false
