@@ -813,7 +813,7 @@ def read_gate_mapping(state_dir: Path, reminder_id: str) -> dict[str, Any]:
 
 def validate_delivery_receipt(
 	receipt: Any, mapping: dict[str, Any], identifier: str
-) -> None:
+) -> dict[str, Any]:
 	"""Require one receipt bound to the exact delivered approval contract."""
 	receipt = require_json_object(receipt, document_name="delivery receipt")
 	expected = {
@@ -825,8 +825,10 @@ def validate_delivery_receipt(
 	for field, value in expected.items():
 		if receipt.get(field) != value:
 			raise ContractError(f"delivery receipt does not match gate field: {field}")
-	if not receipt.get("delivered_at"):
-		raise ContractError("delivery receipt lacks delivered_at")
+	parse_timezone_aware_timestamp(
+		receipt.get("delivered_at"), field_name="delivery receipt delivered_at"
+	)
+	return receipt
 
 
 def read_exact_completed_reminder(reminder_id: str, list_id: str) -> dict[str, Any]:
@@ -863,7 +865,7 @@ def validate_outcome_target(
 		raise ContractError("reminder title changed; refusing outcome update")
 	if mapping.get("required_notes_line") not in (reminder.get("notes") or "").splitlines():
 		raise ContractError("approval meaning is absent from reminder notes")
-	if not reminder.get("isCompleted") or not reminder.get("completionDate"):
+	if reminder.get("isCompleted") is not True or not reminder.get("completionDate"):
 		raise ContractError("outcome requires an already completed reminder")
 
 
@@ -1050,7 +1052,16 @@ def poll(args: argparse.Namespace) -> dict[str, Any]:
 		identifier = event_id(mapping)
 		receipt_path = state_dir / "receipts" / f"{identifier}.json"
 		if receipt_path.exists():
-			validate_delivery_receipt(load_json(receipt_path), mapping, identifier)
+			receipt = validate_delivery_receipt(
+				load_json(receipt_path), mapping, identifier
+			)
+			update_request_state(
+				state_dir,
+				mapping,
+				"delivered",
+				event_id=identifier,
+				delivered_at=receipt["delivered_at"],
+			)
 			continue
 		reminder = items_by_id.get(mapping.get("reminder_id"))
 		repair: str | None = None
@@ -1083,7 +1094,21 @@ def poll(args: argparse.Namespace) -> dict[str, Any]:
 			}
 			write_json(mapping_path, mapping)
 			update_request_state(state_dir, mapping, "gated", repair=None)
-		if not reminder.get("isCompleted"):
+		completion_state = reminder.get("isCompleted")
+		if completion_state is False:
+			continue
+		if completion_state is not True:
+			repair = f"reminder isCompleted must be a JSON boolean; reminder ID: {mapping['reminder_id']}"
+			write_json(
+				mapping_path,
+				{
+					**mapping,
+					"status": "repair",
+					"repair": repair,
+					"updated_at": datetime.now(timezone.utc).isoformat(),
+				},
+			)
+			update_request_state(state_dir, mapping, "repair", repair=repair)
 			continue
 		completion_date = reminder.get("completionDate")
 		try:

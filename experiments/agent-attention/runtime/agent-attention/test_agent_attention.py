@@ -1029,6 +1029,18 @@ else:
 				),
 				"does not match gate field: thread_id",
 			),
+			(
+				json.dumps(
+					{
+						"event_id": self._event_id(),
+						"reminder_id": REMINDER_ID,
+						"thread_id": THREAD_ID,
+						"approval_meaning": APPROVAL_MEANING,
+						"delivered_at": "not-a-timestamp",
+					}
+				),
+				"delivery receipt delivered_at must be an ISO 8601 timestamp",
+			),
 		):
 			with self.subTest(expected_error=expected_error):
 				receipt_path.write_text(receipt, encoding="utf-8")
@@ -1037,6 +1049,64 @@ else:
 				self.assertIn(expected_error, completed.stderr)
 				self.assertNotIn("Traceback", completed.stderr)
 				self.assertEqual(list((self.state_dir / "claims").glob("*.json")), [])
+
+	def test_poll_repairs_non_boolean_completion_without_claiming(self) -> None:
+		for path in (self.state_dir / "receipts").glob("*.json"):
+			path.unlink()
+		for completion_state in ("false", 1, None):
+			with self.subTest(completion_state=completion_state):
+				self.target["isCompleted"] = completion_state
+				self._write_inventory()
+				completed = self.run_cli("poll")
+				result = self.result(completed)
+				self.assertEqual(result["status"], "waiting")
+				self.assertEqual(list((self.state_dir / "claims").glob("*.json")), [])
+				mapping = json.loads(
+					(self.state_dir / "gates" / f"{REMINDER_ID}.json").read_text()
+				)
+				self.assertEqual(mapping["status"], "repair")
+				self.assertIn("isCompleted must be a JSON boolean", mapping["repair"])
+				self.assertNotIn("Traceback", completed.stderr)
+
+	def test_poll_reconciles_request_state_from_existing_delivery_receipt(self) -> None:
+		request_dir = self.state_dir / "requests"
+		request_dir.mkdir()
+		request_path = request_dir / f"{THREAD_ID}.json"
+		request_path.write_text(
+			json.dumps(
+				{
+					"version": 1,
+					"request_id": "existing-request",
+					"thread_id": THREAD_ID,
+					"reminder_id": REMINDER_ID,
+					"intent": {"continuation": "Resume exact work."},
+					"status": "gated",
+				}
+			),
+			encoding="utf-8",
+		)
+		result = self.result(self.run_cli("poll"))
+		self.assertEqual(result["status"], "waiting")
+		request = json.loads(request_path.read_text())
+		self.assertEqual(request["status"], "delivered")
+		self.assertEqual(request["event_id"], self._event_id())
+		self.assertEqual(request["delivered_at"], "2026-08-10T05:41:00Z")
+
+	def test_outcome_rejects_truthy_non_boolean_completion(self) -> None:
+		self.target["isCompleted"] = "false"
+		self._write_inventory()
+		completed = self.run_cli(
+			"record-outcome",
+			"--reminder-id",
+			REMINDER_ID,
+			"--outcome",
+			"Must not record.",
+			"--finished-at",
+			FINISHED_AT,
+		)
+		self.assertEqual(completed.returncode, 1)
+		self.assertIn("already completed reminder", completed.stderr)
+		self.assertEqual([call[0] for call in self.calls()], ["show"])
 
 	def test_poll_records_repair_for_one_broken_gate_and_delivers_the_next(self) -> None:
 		for path in (self.state_dir / "receipts").glob("*.json"):
