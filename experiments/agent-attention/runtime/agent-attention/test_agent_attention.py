@@ -935,13 +935,10 @@ else:
 			["--state-dir", str(self.state_dir), *self.submit_arguments(), "--execute"]
 		)
 		run_json = mock.Mock(side_effect=fake_run_json)
+		read_inventory = mock.Mock(side_effect=lambda _config, **_: [{**created_gate}])
 		with (
 			mock.patch.object(AGENT_ATTENTION, "run_json", run_json),
-			mock.patch.object(
-				AGENT_ATTENTION,
-				"read_inventory",
-				side_effect=lambda _config: [{**created_gate}],
-			),
+			mock.patch.object(AGENT_ATTENTION, "read_inventory", read_inventory),
 		):
 			result = AGENT_ATTENTION.submit_approval(args)
 		self.assertEqual(result["status"], "gated")
@@ -949,6 +946,10 @@ else:
 		self.assertEqual(
 			run_json.call_args.kwargs,
 			{"timeout_seconds": AGENT_ATTENTION.REMINDCTL_COMMAND_TIMEOUT_SECONDS},
+		)
+		read_inventory.assert_called_once_with(
+			{"version": 1, "list": self.mapping["list"]},
+			timeout_seconds=AGENT_ATTENTION.REMINDCTL_COMMAND_TIMEOUT_SECONDS,
 		)
 
 	def test_submit_reclaims_claim_abandoned_before_request_declaration(self) -> None:
@@ -1052,6 +1053,24 @@ else:
 			os.umask(previous_umask)
 		self.assertEqual(modes_before_write, [0o600])
 		self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+
+	def test_audit_rejects_symlinks_and_multiply_linked_files(self) -> None:
+		target = self.state_dir / "audit-target.jsonl"
+		target.parent.mkdir(parents=True, exist_ok=True)
+		target.write_text("sentinel\n", encoding="utf-8")
+		symlink = self.state_dir / "audit-symlink.jsonl"
+		symlink.symlink_to(target)
+		with self.assertRaises(OSError):
+			AGENT_ATTENTION.append_audit(symlink, {"event": "must-not-write"})
+		self.assertEqual(target.read_text(encoding="utf-8"), "sentinel\n")
+
+		hardlink = self.state_dir / "audit-hardlink.jsonl"
+		os.link(target, hardlink)
+		with self.assertRaisesRegex(
+			AGENT_ATTENTION.ContractError, "singly linked regular file"
+		):
+			AGENT_ATTENTION.append_audit(hardlink, {"event": "must-not-write"})
+		self.assertEqual(target.read_text(encoding="utf-8"), "sentinel\n")
 
 	def test_submit_releases_owned_claim_when_remindctl_never_starts(self) -> None:
 		missing_bin = self.root / "missing-bin"

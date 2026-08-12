@@ -10,6 +10,7 @@ import json
 import math
 import os
 import plistlib
+import stat
 import subprocess
 import sys
 import time
@@ -174,8 +175,14 @@ def release_request_lock(_path: Path, descriptor: int) -> None:
 def append_audit(path: Path, value: Any) -> None:
 	"""Append one private JSON audit event."""
 	path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-	descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+	flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND
+	if hasattr(os, "O_NOFOLLOW"):
+		flags |= os.O_NOFOLLOW
+	descriptor = os.open(path, flags, 0o600)
 	try:
+		metadata = os.fstat(descriptor)
+		if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+			raise ContractError("audit path must be one singly linked regular file")
 		os.fchmod(descriptor, 0o600)
 	except BaseException:
 		os.close(descriptor)
@@ -670,7 +677,9 @@ def _submit_approval(args: argparse.Namespace) -> dict[str, Any]:
 		)
 		raise
 	try:
-		created_inventory = read_inventory(config)
+		created_inventory = read_inventory(
+			config, timeout_seconds=REMINDCTL_COMMAND_TIMEOUT_SECONDS
+		)
 	except (ContractError, json.JSONDecodeError, OSError, subprocess.SubprocessError) as error:
 		write_json(
 			path,
