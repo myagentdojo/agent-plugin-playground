@@ -1393,6 +1393,7 @@ export function proveInstalledCapabilityEvidence(
 		.filter((path) => /^skills\/[^/]+\/SKILL\.md$/.test(path))
 		.map((path) => path.slice("skills/".length, -"/SKILL.md".length))
 	const portableSkills = [
+		"agent-attention",
 		"capability-tour",
 		"hello-world",
 		"runtime-custody",
@@ -1402,7 +1403,7 @@ export function proveInstalledCapabilityEvidence(
 	if (JSON.stringify(installedSkills) !== JSON.stringify(portableSkills)) {
 		throw new Error(`${client} installed portable skill inventory differs`)
 	}
-	const executableSkills = ["hello-world", "skill-a", "skill-b"]
+	const executableSkills = ["agent-attention", "hello-world", "skill-a", "skill-b"]
 	const launchers = installedInventory
 		.filter((path) => path.startsWith("bin/"))
 		.map((path) => path.slice("bin/".length))

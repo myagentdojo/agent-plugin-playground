@@ -3,7 +3,7 @@
   "displayName": "Agent Plugin Playground",
   "version": "0.1.0",
   "defaultEnabled": false,
-  "description": "Bun-powered native plugin playground for one active experiment at a time",
+  "description": "Bun-powered Agent Attention approval gates in the native plugin playground",
   "author": {
     "name": "My Agent Dojo"
   },

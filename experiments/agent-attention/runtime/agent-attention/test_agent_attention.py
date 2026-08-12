@@ -8,6 +8,7 @@ import importlib.util
 import json
 import os
 import plistlib
+import stat
 import subprocess
 import sys
 import tempfile
@@ -19,7 +20,9 @@ from pathlib import Path
 from typing import Any
 
 
-RUNTIME = Path(__file__).with_name("agent-attention.py")
+RUNTIME = Path(
+    os.environ.get("AGENT_ATTENTION_RUNTIME", Path(__file__).with_name("agent-attention.py"))
+)
 RUNTIME_SPEC = importlib.util.spec_from_file_location("agent_attention_runtime", RUNTIME)
 assert RUNTIME_SPEC and RUNTIME_SPEC.loader
 AGENT_ATTENTION = importlib.util.module_from_spec(RUNTIME_SPEC)
@@ -309,6 +312,8 @@ else:
 		result = json.loads(completed.stdout)
 		self.assertEqual(result["status"], "error")
 		self.assertEqual(result["error_category"], "contract_or_runtime")
+		self.assertIs(result["changed"], False)
+		self.assertIs(result["change_uncertain"], True)
 
 	def test_non_object_config_uses_the_structured_error_boundary(self) -> None:
 		(self.state_dir / "config.json").write_text("[]", encoding="utf-8")
@@ -564,6 +569,38 @@ else:
 		self.assertEqual(
 			len((self.state_dir / "outcome-audit.jsonl").read_text().splitlines()), 1
 		)
+
+	def test_outcome_bounds_completed_reads_and_edit(self) -> None:
+		before = {**self.target}
+		after = {**before}
+
+		def fake_run_json(command: list[str], **_: Any) -> Any:
+			if command[1:3] == ["show", "completed"]:
+				return [{**after}]
+			if command[1] == "edit":
+				after["notes"] = command[command.index("--notes") + 1]
+				after["lastModifiedDate"] = "2026-08-10T05:45:01Z"
+				return {**after}
+			raise AssertionError(f"unexpected command: {command}")
+
+		run_json = mock.Mock(side_effect=fake_run_json)
+		with mock.patch.object(AGENT_ATTENTION, "run_json", run_json):
+			result = AGENT_ATTENTION.record_outcome(
+				AGENT_ATTENTION.argparse.Namespace(
+					state_dir=self.state_dir,
+					reminder_id=REMINDER_ID,
+					outcome="Bound every outcome command.",
+					finished_at=FINISHED_AT,
+					execute=True,
+				)
+			)
+		self.assertEqual(result["status"], "recorded")
+		self.assertEqual(len(run_json.call_args_list), 3)
+		for invocation in run_json.call_args_list:
+			self.assertEqual(
+				invocation.kwargs,
+				{"timeout_seconds": AGENT_ATTENTION.REMINDCTL_COMMAND_TIMEOUT_SECONDS},
+			)
 
 	def test_outcome_rejects_a_second_terminal_result(self) -> None:
 		first = self.run_cli(
@@ -870,10 +907,50 @@ else:
 			json.dumps({"thread_id": THREAD_ID, "request_id": "abandoned"}),
 			encoding="utf-8",
 		)
+		lock_inode = lock_path.stat().st_ino
 		result = self.result(self.run_cli(*self.submit_arguments(), "--execute"))
 		self.assertEqual(result["status"], "gated")
-		self.assertFalse(lock_path.exists())
+		self.assertTrue(lock_path.exists())
+		self.assertEqual(lock_path.stat().st_ino, lock_inode)
 		self.assertEqual(len([call for call in self.calls() if call[0] == "add"]), 1)
+
+	def test_submit_bounds_remindctl_add_while_request_lock_is_held(self) -> None:
+		created_gate: dict[str, Any] = {}
+
+		def fake_run_json(command: list[str], **_: Any) -> Any:
+			created_gate.update(
+				{
+					"id": NEW_REMINDER_ID,
+					"listID": command[command.index("--list-id") + 1],
+					"title": command[command.index("--title") + 1],
+					"notes": command[command.index("--notes") + 1],
+					"url": command[command.index("--url") + 1],
+					"priority": command[command.index("--priority") + 1],
+					"isCompleted": False,
+				}
+			)
+			return {"id": NEW_REMINDER_ID}
+
+		args = AGENT_ATTENTION.parser().parse_args(
+			["--state-dir", str(self.state_dir), *self.submit_arguments(), "--execute"]
+		)
+		run_json = mock.Mock(side_effect=fake_run_json)
+		read_inventory = mock.Mock(side_effect=lambda _config, **_: [{**created_gate}])
+		with (
+			mock.patch.object(AGENT_ATTENTION, "run_json", run_json),
+			mock.patch.object(AGENT_ATTENTION, "read_inventory", read_inventory),
+		):
+			result = AGENT_ATTENTION.submit_approval(args)
+		self.assertEqual(result["status"], "gated")
+		self.assertEqual(run_json.call_count, 1)
+		self.assertEqual(
+			run_json.call_args.kwargs,
+			{"timeout_seconds": AGENT_ATTENTION.REMINDCTL_COMMAND_TIMEOUT_SECONDS},
+		)
+		read_inventory.assert_called_once_with(
+			{"version": 1, "list": self.mapping["list"]},
+			timeout_seconds=AGENT_ATTENTION.REMINDCTL_COMMAND_TIMEOUT_SECONDS,
+		)
 
 	def test_submit_reclaims_claim_abandoned_before_request_declaration(self) -> None:
 		arguments = self.submit_arguments()
@@ -955,9 +1032,45 @@ else:
 			env_update={"FAKE_REMINDERS_NEW_ID": ""},
 		)
 		self.assertEqual(completed.returncode, 1)
-		self.assertFalse(
+		self.assertTrue(
 			(self.state_dir / "request-locks" / f"{THREAD_ID}.json").exists()
 		)
+
+	def test_audit_file_is_private_before_the_first_write(self) -> None:
+		path = self.state_dir / "audit-mode-test.jsonl"
+		real_fdopen = os.fdopen
+		modes_before_write: list[int] = []
+
+		def checked_fdopen(descriptor: int, *args: Any, **kwargs: Any) -> Any:
+			modes_before_write.append(stat.S_IMODE(os.fstat(descriptor).st_mode))
+			return real_fdopen(descriptor, *args, **kwargs)
+
+		previous_umask = os.umask(0)
+		try:
+			with mock.patch.object(AGENT_ATTENTION.os, "fdopen", side_effect=checked_fdopen):
+				AGENT_ATTENTION.append_audit(path, {"event": "bounded-test"})
+		finally:
+			os.umask(previous_umask)
+		self.assertEqual(modes_before_write, [0o600])
+		self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+
+	def test_audit_rejects_symlinks_and_multiply_linked_files(self) -> None:
+		target = self.state_dir / "audit-target.jsonl"
+		target.parent.mkdir(parents=True, exist_ok=True)
+		target.write_text("sentinel\n", encoding="utf-8")
+		symlink = self.state_dir / "audit-symlink.jsonl"
+		symlink.symlink_to(target)
+		with self.assertRaises(OSError):
+			AGENT_ATTENTION.append_audit(symlink, {"event": "must-not-write"})
+		self.assertEqual(target.read_text(encoding="utf-8"), "sentinel\n")
+
+		hardlink = self.state_dir / "audit-hardlink.jsonl"
+		os.link(target, hardlink)
+		with self.assertRaisesRegex(
+			AGENT_ATTENTION.ContractError, "singly linked regular file"
+		):
+			AGENT_ATTENTION.append_audit(hardlink, {"event": "must-not-write"})
+		self.assertEqual(target.read_text(encoding="utf-8"), "sentinel\n")
 
 	def test_submit_releases_owned_claim_when_remindctl_never_starts(self) -> None:
 		missing_bin = self.root / "missing-bin"

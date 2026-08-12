@@ -47,9 +47,8 @@ describe('Agent Attention Codex Stop guard', () => {
 	test('rejects missing and wrong-typed correlation fields', () => {
 		expect(isAgentAttentionStopInput(null)).toBe(false)
 		expect(isAgentAttentionStopInput([])).toBe(false)
-		expect(isAgentAttentionStopInput({ cwd: '', session_id: THREAD_ID })).toBe(
-			false,
-		)
+		expect(isAgentAttentionStopInput({ session_id: THREAD_ID })).toBe(true)
+		expect(isAgentAttentionStopInput({ cwd: 42, session_id: THREAD_ID })).toBe(false)
 		expect(isAgentAttentionStopInput({ cwd: '/tmp/repo' })).toBe(false)
 		expect(
 			isAgentAttentionStopInput({

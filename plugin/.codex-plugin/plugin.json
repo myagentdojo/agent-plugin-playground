@@ -1,7 +1,7 @@
 {
   "name": "agent-plugin-playground",
   "version": "0.1.0",
-  "description": "Bun-powered native plugin playground for one active experiment at a time",
+  "description": "Bun-powered Agent Attention approval gates in the native plugin playground",
   "author": {
     "name": "My Agent Dojo"
   },
@@ -15,8 +15,8 @@
   "hooks": "./hooks/codex/hooks.json",
   "interface": {
     "displayName": "Agent Plugin Playground",
-    "shortDescription": "One active plugin experiment",
-    "longDescription": "Use a private playground to inspect native plugin declarations, run the capability tour, and prepare one experiment without claiming release qualification.",
+    "shortDescription": "Route one blocking approval",
+    "longDescription": "Route one genuine yes or no Codex approval blocker into Apple Reminders with exact-task state, installed Stop enforcement, and retained outcome receipts.",
     "developerName": "My Agent Dojo",
     "category": "Developer Tools",
     "capabilities": [
@@ -26,10 +26,12 @@
       "Use network during repair",
       "Inspect native plugin declarations",
       "Prove lifecycle hook mechanics",
-      "Verify with a native subagent"
+      "Verify with a native subagent",
+      "Route Apple Reminders approval gates",
+      "Enforce exact-task Stop state"
     ],
     "defaultPrompt": [
-      "Run the native plugin capability tour."
+      "Route this blocking yes or no approval through Agent Attention."
     ],
     "brandColor": "#3B5CCC",
     "composerIcon": "./assets/composer-icon.svg",
