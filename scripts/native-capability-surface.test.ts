@@ -186,6 +186,34 @@ test("capability tour is one model-only skill with one cross-client reviewer pro
 	expect(existsSync(join(root, "plugin", "bin", "capability-tour"))).toBe(false)
 })
 
+test("capability tour skill inventory names every shipped skill and its runtime tier", () => {
+	const skill = readFileSync(join(root, "plugin", "skills", "capability-tour", "SKILL.md"), "utf8")
+	const catalog = JSON.parse(readFileSync(join(root, "runtime", "skill-catalog.json"), "utf8"))
+	const shipped = readdirSync(join(root, "plugin", "skills"), { withFileTypes: true })
+		.filter((entry) => entry.isDirectory())
+		.map((entry) => entry.name)
+		.sort()
+	const catalogSkills = Object.keys(catalog.skills ?? {}).sort()
+	const bunBacked = shipped.filter((id) => catalogSkills.includes(id))
+	expect(catalogSkills).toEqual(bunBacked)
+	const modelOnly = shipped.filter((id) => !catalogSkills.includes(id))
+
+	const inventory = skill
+		.split("\n")
+		.find((line) => line.includes("Available portable skills"))
+	expect(inventory).toBeDefined()
+	const listed = [...(inventory ?? "").matchAll(/`([^`]+)`/g)]
+		.map((match) => match[1])
+		.filter((id) => id !== "Available portable skills")
+	expect([...listed].sort()).toEqual(shipped)
+	expect([...listed.slice(0, bunBacked.length)].sort()).toEqual(bunBacked)
+	expect([...listed.slice(bunBacked.length)].sort()).toEqual(modelOnly)
+
+	const spelled = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight"]
+	expect(inventory).toContain(`first ${spelled[bunBacked.length]}`)
+	expect(inventory).toContain(`last ${spelled[modelOnly.length]}`)
+})
+
 test("payload contains only the named capability sidecars and no standalone agent surface", () => {
 	const inventory = pluginPayloadInventory(root)
 	expect(inventory.filter((path) => path.startsWith("hooks/"))).toEqual([
@@ -270,6 +298,46 @@ test("repository docs separate lifecycle mechanics from fresh-native qualificati
 	}
 	expect(capability).toMatch(/production integrity or security\s+guarantee/)
 	expect(capability).not.toMatch(/\bv?\d+\.\d+\.\d+\b/)
+})
+
+test("fresh-native qualification runbook owns privacy, lineage, bounded cells, and completion", () => {
+	const qualification = readFileSync(
+		join(root, "docs", "native-capability-qualification.md"),
+		"utf8",
+	)
+
+	for (const privacyClaim of [
+		"$XDG_STATE_HOME/agent-plugin-template/runtime-custody/",
+		"`0700`",
+		"`0600`",
+		"`umask 077`",
+		"Never promote paths, prompts, transcript text, session data, environment dumps, or raw host receipts.",
+	]) {
+		expect(qualification).toContain(privacyClaim)
+	}
+	for (const lineageClaim of [
+		"exact source candidate SHA",
+		"archive SHA-256",
+		"packaged payload hash",
+		"independently measured installed payload hash",
+		"The packaged and installed hashes must match.",
+	]) {
+		expect(qualification).toContain(lineageClaim)
+	}
+	for (const boundedCell of [
+		"Fresh discovery and branded UI identity.",
+		"Skill-seeded generic native delegation",
+		"One native `SessionStart` receipt",
+		"Host-observed zero-output clean `Stop` completion.",
+		"disposable candidate-derived drift copy",
+		"Silent `stop_hook_active: true` re-entry",
+		"Capability-tour and existing-skill operation when hooks are disabled or untrusted",
+	]) {
+		expect(qualification).toContain(boundedCell)
+	}
+	expect(qualification).toContain(
+		"Qualification completes when every bounded cell has a result, every promoted claim is bound to the same candidate, packaged and installed payload hashes match, and the raw receipts remain private.",
+	)
 })
 
 test("recursive package copy preserves the complete payload inventory", () => {
