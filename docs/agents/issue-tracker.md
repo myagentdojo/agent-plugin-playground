@@ -1,6 +1,6 @@
 # Issue tracker: GitHub
 
-Issues and specs for this repo live as GitHub issues in `myagentdojo/agent-plugin-template`. Use `gh` from a dedicated account session or `ghh` for a process-scoped account.
+Issues and specs for this repo live as GitHub issues in `myagentdojo/agent-plugin-playground`. Use `gh` from a dedicated account session or `ghh` for a process-scoped account.
 
 Commands below use `gh`. On shared hosts or during concurrent agent work, replace that prefix with `ghh exec --account myagentdojo --`. For example:
 

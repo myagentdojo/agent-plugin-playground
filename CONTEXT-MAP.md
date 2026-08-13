@@ -9,6 +9,7 @@ Consumer rules for these files: `docs/agents/domain.md`.
 | Context | Glossary | Context ADRs | Scope |
 | --- | --- | --- | --- |
 | **System-wide** | [`CONTEXT.md`](./CONTEXT.md) | [`docs/adr/`](./docs/adr/) | Plugin distribution across Harnesses: Plugin Payload, Harness Adapter, Portable Runtime, Marketplace, Release, Capability Tour, and the capability boundaries. |
+| **agent-attention** | `packages/agent-attention/CONTEXT.md` _(not yet created)_ | `packages/agent-attention/docs/adr/` _(not yet created)_ | Approval-blocker delivery, Apple Reminders coordination, and Codex task routing. |
 | **skill-a** | `packages/skill-a/CONTEXT.md` _(not yet created)_ | `packages/skill-a/docs/adr/` _(not yet created)_ | Dependency-bearing workspace skill. Currently an ESM/CJS interop boundary fixture. |
 | **skill-b** | `packages/skill-b/CONTEXT.md` _(not yet created)_ | `packages/skill-b/docs/adr/` _(not yet created)_ | Dependency-bearing workspace skill. Currently an ESM/CJS interop boundary fixture. |
 
@@ -17,6 +18,7 @@ Entries marked _not yet created_ are intentional. Per-context files are created 
 ## Which glossary governs
 
 - A term describing distribution, packaging, harness behavior, runtime custody, or release → **system-wide** `CONTEXT.md`.
+- A term describing approval blockers, Reminder delivery, or task routing → `agent-attention` context; use the system glossary until its local glossary exists.
 - A term meaningful only inside one workspace package → that package's `CONTEXT.md`; create it when the term first needs pinning.
 - A decision affecting more than one context → `docs/adr/` at the root, not a context ADR.
 

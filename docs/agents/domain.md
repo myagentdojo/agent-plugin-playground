@@ -25,6 +25,9 @@ This repo has no `src/` — workspace contexts live under `packages/`:
 ├── runtime/                           ← portable runtime + skill catalog
 ├── scripts/                           ← authoring, release, and proof tooling
 └── packages/
+    ├── agent-attention/
+    │   ├── CONTEXT.md                 ← created lazily by /domain-modeling
+    │   └── docs/adr/                  ← context-specific decisions
     ├── skill-a/
     │   ├── CONTEXT.md                 ← created lazily by /domain-modeling
     │   └── docs/adr/                  ← context-specific decisions
@@ -33,7 +36,7 @@ This repo has no `src/` — workspace contexts live under `packages/`:
         └── docs/adr/
 ```
 
-Per-context `CONTEXT.md` and `docs/adr/` directories are **created lazily**. At the time of writing, `packages/skill-a` and `packages/skill-b` are dependency-boundary fixtures proving ESM/CJS interop, and every accepted decision is system-wide. Don't create empty per-context files ahead of real vocabulary.
+Per-context `CONTEXT.md` and `docs/adr/` directories are **created lazily**. `packages/skill-a` and `packages/skill-b` remain dependency-boundary fixtures; `packages/agent-attention` owns approval-blocker delivery behavior. Don't create empty per-context files ahead of real vocabulary.
 
 ## Use the glossary's vocabulary
 

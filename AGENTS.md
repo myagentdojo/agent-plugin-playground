@@ -1,4 +1,4 @@
-# Agent Plugin Template
+# Agent Plugin Playground
 
 Build one Git-distributed plugin payload for Claude Code and Codex. Keep shared behavior portable; keep each harness's manifest, trust, and lifecycle adapter native.
 
@@ -8,6 +8,7 @@ Build one Git-distributed plugin payload for Claude Code and Codex. Keep shared 
 - Release identity or version: route through `scripts/init.ts` or the generated release PR. `.github/release-please-config.json` owns the Release Please package name.
 - Skill workflow: edit `plugin/skills/<id>/`.
 - Portable implementation: edit dependency-free commands in `runtime/src/`; edit dependency-bearing workspace code in `packages/<id>/src/`; register bundles in `runtime/skill-catalog.json`.
+- Agent Attention: edit `packages/agent-attention/src/`, `experiments/agent-attention/`, and `plugin/skills/agent-attention/`; rebuild generated runtime bytes before committing.
 - Runtime custody: edit the engine in `plugin/runtime/runtime-exec` or the approved runtime identity in `runtime/runtime.lock.json`; preserve `docs/adr/0005-shared-runtime-custody.md` and `docs/adr/0006-single-bun-runtime-tier.md`.
 - Generated output: follow the source header when present. For headerless manifests and hook JSON, edit `plugin.config.json` and run `bun run generate`. For bundles, inventory, and notices, edit workspace sources and run `bun run build`. Commit source and output together.
 - Release or publishing behavior: read `docs/adr/0003-reviewed-versioned-releases.md` and route through `docs/releasing.md`.
@@ -39,7 +40,7 @@ Initialization, development, installation, replacement, qualification, or releas
 
 ### Issue tracker
 
-Issues live as GitHub issues in `myagentdojo/agent-plugin-template`, managed with `gh` or process-scoped `ghh` for concurrent agents. See `docs/agents/issue-tracker.md`.
+Issues live as GitHub issues in `myagentdojo/agent-plugin-playground`, managed with `gh` or process-scoped `ghh` for concurrent agents. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
