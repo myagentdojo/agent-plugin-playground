@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2](https://github.com/myagentdojo/agent-plugin-playground/compare/v0.1.1...v0.1.2) (2026-08-13)
+
+
+### Bug Fixes
+
+* propagate safe immutable plugin updates ([#7](https://github.com/myagentdojo/agent-plugin-playground/issues/7)) ([830ef32](https://github.com/myagentdojo/agent-plugin-playground/commit/830ef326d016c5c6e3068c3606a8bcf39006cc9d))
+
 ## [0.1.1](https://github.com/myagentdojo/agent-plugin-playground/compare/v0.1.0...v0.1.1) (2026-08-12)
 
 
