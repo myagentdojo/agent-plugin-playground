@@ -186,6 +186,34 @@ test("capability tour is one model-only skill with one cross-client reviewer pro
 	expect(existsSync(join(root, "plugin", "bin", "capability-tour"))).toBe(false)
 })
 
+test("capability tour skill inventory names every shipped skill and its runtime tier", () => {
+	const skill = readFileSync(join(root, "plugin", "skills", "capability-tour", "SKILL.md"), "utf8")
+	const catalog = JSON.parse(readFileSync(join(root, "runtime", "skill-catalog.json"), "utf8"))
+	const shipped = readdirSync(join(root, "plugin", "skills"), { withFileTypes: true })
+		.filter((entry) => entry.isDirectory())
+		.map((entry) => entry.name)
+		.sort()
+	const catalogSkills = Object.keys(catalog.skills ?? {}).sort()
+	const bunBacked = shipped.filter((id) => catalogSkills.includes(id))
+	expect(catalogSkills).toEqual(bunBacked)
+	const modelOnly = shipped.filter((id) => !catalogSkills.includes(id))
+
+	const inventory = skill
+		.split("\n")
+		.find((line) => line.includes("Available portable skills"))
+	expect(inventory).toBeDefined()
+	const listed = [...(inventory ?? "").matchAll(/`([^`]+)`/g)]
+		.map((match) => match[1])
+		.filter((id) => id !== "Available portable skills")
+	expect([...listed].sort()).toEqual(shipped)
+	expect([...listed.slice(0, bunBacked.length)].sort()).toEqual(bunBacked)
+	expect([...listed.slice(bunBacked.length)].sort()).toEqual(modelOnly)
+
+	const spelled = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight"]
+	expect(inventory).toContain(`first ${spelled[bunBacked.length]}`)
+	expect(inventory).toContain(`last ${spelled[modelOnly.length]}`)
+})
+
 test("payload contains only the named capability sidecars and no standalone agent surface", () => {
 	const inventory = pluginPayloadInventory(root)
 	expect(inventory.filter((path) => path.startsWith("hooks/"))).toEqual([
